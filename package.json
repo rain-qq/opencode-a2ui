@@ -1,0 +1,16 @@
+{
+  "name": "a2ui-chat",
+  "private": true,
+  "version": "0.1.0",
+  "description": "An AI dialogue system based on the A2UI v0.9.1 protocol",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "agent": "pnpm --filter @a2ui/server run agent",
+    "serve": "pnpm --filter @a2ui/server run serve",
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

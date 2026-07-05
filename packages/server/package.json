@@ -1,0 +1,24 @@
+{
+  "name": "@a2ui/server",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "agent": "tsx src/index.ts",
+    "serve": "tsx src/serve.ts",
+    "dev": "tsx watch src/serve.ts",
+    "smoke": "tsx scripts/smoke-adapter.ts",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@a2ui/protocol": "workspace:*",
+    "@fastify/cors": "^9.0.1",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5"
+  }
+}
