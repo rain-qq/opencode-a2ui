@@ -56,6 +56,18 @@ interface A2UIState {
   applyEnvelope(env: A2UIEnvelope): void;
   writeData(surfaceId: SurfaceId, pointer: string, value: unknown): void;
   reset(): void;
+
+  // --- registry + selection (skill / mcp / subagent picker) ---
+  // Declared inline (not via `declare module` self-augmentation, which TS does
+  // not merge from within the same file). See RegistrySnapshot / AgentSelection
+  // at the bottom of this file.
+  registry: RegistrySnapshot | null;
+  registryLoading: boolean;
+  registryError: string | null;
+  selection: AgentSelection;
+  fetchRegistry(): Promise<void>;
+  toggleSelection(kind: "agents" | "skills" | "mcps", id: string): void;
+  clearSelection(): void;
 }
 
 function makeSessionId() {
@@ -250,7 +262,44 @@ export const useA2UI = create<A2UIState>((set, get) => ({
       surfaceOrder: [],
       conversation: [],
       busy: false,
+      // Note: registry + selection intentionally survive reset() — they are
+      // global chat-prefs, not per-session state. Clearing them here would
+      // surprise the user mid-conversation.
     }),
+
+  // --- registry + selection ---
+  registry: null,
+  registryLoading: false,
+  registryError: null,
+  selection: { agents: [], skills: [], mcps: [] },
+
+  fetchRegistry: async () => {
+    if (get().registryLoading) return;
+    set({ registryLoading: true, registryError: null });
+    try {
+      const res = await fetch("/api/agents");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as RegistrySnapshot;
+      set({ registry: data, registryLoading: false });
+    } catch (err) {
+      set({
+        registryLoading: false,
+        registryError: (err as Error).message ?? "fetch failed",
+      });
+    }
+  },
+
+  toggleSelection: (kind, id) =>
+    set((s) => {
+      const cur = s.selection[kind];
+      const next = cur.includes(id)
+        ? cur.filter((x) => x !== id)
+        : [...cur, id];
+      return { selection: { ...s.selection, [kind]: next } };
+    }),
+
+  clearSelection: () =>
+    set({ selection: { agents: [], skills: [], mcps: [] } }),
 }));
 
 /** Snapshot all surface data models (for sendDataModel-enabled actions). */
@@ -262,4 +311,27 @@ export function snapshotSurfaceDataModels(): Record<SurfaceId, unknown> {
     if (surf?.sendDataModel) out[id] = surf.dataModel;
   }
   return out;
+}
+
+/* ============================================================ *
+ *  Skill / MCP / Subagent registry + selection
+ * ============================================================ */
+
+export interface RegistryEntry {
+  id: string;
+  label: string;
+  description: string;
+  hint?: string;
+}
+
+export interface RegistrySnapshot {
+  agents: RegistryEntry[];
+  skills: RegistryEntry[];
+  mcps: RegistryEntry[];
+}
+
+export interface AgentSelection {
+  agents: string[];
+  skills: string[];
+  mcps: string[];
 }

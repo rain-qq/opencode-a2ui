@@ -172,18 +172,37 @@ button { font-family: inherit; }
   display: flex;
   gap: 10px;
   background: rgba(15, 17, 21, 0.92);
+  position: relative; /* anchor for .agent-dropdown absolute positioning */
 }
-.chat-input input {
+/* The "input box" is now a wrapper that holds the picker chips + the bare
+   text input — the three trigger buttons live INSIDE the field rather than
+   beside it (ChatGPT-style). */
+.chat-input-field {
   flex: 1;
-  padding: 12px 14px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 8px;
   background: var(--a2ui-panel-2);
   border: 1px solid var(--a2ui-border);
   border-radius: 12px;
-  color: var(--a2ui-text);
-  outline: none;
+  transition: border-color 0.12s;
 }
-.chat-input input:focus { border-color: var(--a2ui-primary); }
-.chat-input button {
+.chat-input-field:focus-within { border-color: var(--a2ui-primary); }
+.chat-input-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 8px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--a2ui-text);
+  font-size: 14px;
+}
+/* Send button — scoped to a DIRECT child of .chat-input so it does NOT style
+   the picker trigger buttons nested inside .chat-input-field. */
+.chat-input > button {
   padding: 10px 18px;
   background: var(--a2ui-primary);
   color: #001a25;
@@ -192,7 +211,195 @@ button { font-family: inherit; }
   font-weight: 600;
   cursor: pointer;
 }
-.chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-input > button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ============================================================ *
+ *  Agent / Skill / MCP picker (chat input footer)
+ * ============================================================ */
+
+.agent-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.agent-picker-cell {
+  position: relative;
+}
+
+.agent-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 8px;
+  color: var(--a2ui-text);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.2;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.agent-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.agent-trigger.active {
+  border-color: var(--a2ui-primary);
+  color: var(--a2ui-primary);
+}
+.agent-trigger.has-selection {
+  border-color: rgba(0, 191, 255, 0.5);
+  color: var(--a2ui-primary);
+}
+.agent-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.agent-trigger-icon { font-size: 13px; }
+.agent-trigger-label { font-weight: 600; }
+.agent-trigger-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--a2ui-primary);
+  color: #001a25;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-clear {
+  margin-left: 2px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--a2ui-muted);
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 8px;
+}
+.agent-clear:hover { color: var(--a2ui-text); border-color: var(--a2ui-border); }
+
+.agent-picker-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--a2ui-error);
+}
+.agent-picker-retry {
+  padding: 1px 6px;
+  background: transparent;
+  border: 1px solid var(--a2ui-border);
+  color: var(--a2ui-error);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 5px;
+}
+.agent-picker-retry:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: var(--a2ui-error);
+}
+.agent-picker-retry:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.agent-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  width: 280px;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  background: var(--a2ui-panel);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.agent-dropdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--a2ui-muted);
+  background: var(--a2ui-panel-2);
+  border-bottom: 1px solid var(--a2ui-border);
+}
+.agent-dropdown-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--a2ui-primary);
+}
+
+.agent-dropdown-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-dropdown-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--a2ui-muted);
+}
+
+.agent-dropdown-item {
+  display: flex;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  align-items: flex-start;
+  transition: background 0.1s;
+}
+.agent-dropdown-item:hover { background: var(--a2ui-panel-2); }
+.agent-dropdown-item.checked { background: rgba(0, 191, 255, 0.08); }
+.agent-dropdown-item input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--a2ui-primary);
+  cursor: pointer;
+}
+
+.agent-dropdown-item-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.agent-dropdown-item-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--a2ui-text);
+}
+.agent-dropdown-item.checked .agent-dropdown-item-label { color: var(--a2ui-primary); }
+.agent-dropdown-item-desc {
+  font-size: 11px;
+  color: var(--a2ui-muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 720px) {
+  /* Field wraps: chips on one line, the bare input drops to the next; Send
+     spans full width beneath. */
+  .chat-input { flex-wrap: wrap; }
+  .chat-input-field { flex-basis: 100%; flex-wrap: wrap; }
+  .chat-input-field input { flex-basis: 100%; }
+  .chat-input > button { flex: 1 1 100%; }
+  .agent-dropdown { width: min(280px, calc(100vw - 32px)); }
+}
 
 .surface-card {
   background: var(--a2ui-panel);
@@ -211,13 +418,22 @@ button { font-family: inherit; }
 }
 
 /* A2UI components */
-.a2-row { display: flex; flex-direction: row; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
-.a2-column { display: flex; flex-direction: column; gap: 10px; }
+.a2-row { display: flex; flex-direction: row; gap: 10px; align-items: stretch; flex-wrap: nowrap; min-height: 0; }
+.a2-row > * { min-width: 0; }
+.a2-column { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 .a2-card {
   background: var(--a2ui-panel-2);
   border: 1px solid var(--a2ui-border);
   border-radius: 10px;
   padding: 14px;
+  /* When the card lives inside a flex parent (e.g. .gallery-stage is a flex
+     column), letting it scroll internally avoids the card being clipped by
+     the stage's overflow:auto. min-height:0 is critical so children can
+     actually be smaller than the card and overflow triggers inside it. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
 }
 .a2-divider { height: 1px; background: var(--a2ui-border); margin: 4px 0; }
 .a2-text { white-space: pre-wrap; }
@@ -272,6 +488,369 @@ button { font-family: inherit; }
   color: var(--a2ui-muted);
   font-size: 12px;
 }
+
+/* ============================================================ *
+ *  Process / dashboard helpers: StepList / StepItem / StepProgress / DataTable
+ *  设计要点：
+ *    - 布局复刻"控制台"：左侧 1/3 步骤时间轴 + 右侧 2/3 表格 + 顶部进度条
+ *    - 交互复刻"选中态"：步骤 hover/active 给轻微高亮；表格行 hover 高亮
+ *    - 节奏紧凑：行高/列宽贴近 Tailwind 的 py-2.5 / px-4 体系
+ * ============================================================ */
+
+/* ---- StepList (left-side vertical timeline, ~1/3 宽度) ---- */
+.a2-steplist {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;             /* 紧凑 —— 复用 gap-y-5 的视觉 */
+  padding: 4px 6px 4px 4px;
+  min-width: 0;
+  /* 关键：放在 Row 里时，限定自身宽度，不允许撑爆父容器 */
+  flex: 0 0 auto;
+  width: 220px;
+  max-width: 100%;
+}
+.a2-steplist-track {
+  position: absolute;
+  left: 17px;          /* 对齐 stepitem-marker 中心 */
+  top: 18px;
+  bottom: 18px;
+  width: 2px;
+  background: var(--a2ui-border);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.a2-steplist-empty {
+  color: var(--a2ui-muted);
+  font-size: 12px;
+  padding: 12px;
+  text-align: center;
+  border: 1px dashed var(--a2ui-border);
+  border-radius: 8px;
+}
+
+/* ---- StepItem (single row inside StepList) ---- */
+.a2-stepitem {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  background: transparent;
+  /* 负 margin 让 hover/active 高亮覆盖到 marker 周围，避免 marker 浮在边界外 */
+  margin: 0 -6px;
+}
+.a2-stepitem:hover { background: var(--a2ui-panel-2); }
+.a2-stepitem:focus { outline: none; border-color: var(--a2ui-primary); }
+/* selected 与 status 解耦：status 表示完成进度，selected 表示当前聚焦的步骤。
+   用蓝色调背景+边框，比 hover(纯灰)更突出，与 status-active 的蓝点 marker 不冲突。 */
+.a2-stepitem.selected {
+  background: rgba(0, 191, 255, 0.12);
+  border-color: rgba(0, 191, 255, 0.5);
+}
+
+/* marker 容器：撑住徽标，让轨道线从中心穿过 */
+.a2-stepitem-marker {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  z-index: 1;
+  background: var(--a2ui-bg);    /* 关键：盖住身后的轨道线 */
+  border-radius: 50%;
+}
+
+/* 状态徽标 —— 形状/颜色与你原代码一致：completed=emerald 实心圆+白勾；active=蓝描边白底 + pulse 圆点；pending=灰描边灰数字 */
+.a2-stepitem-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--a2ui-success);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1;
+}
+.a2-stepitem-ring {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--a2ui-panel);
+  border: 2px solid var(--a2ui-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.a2-stepitem-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--a2ui-primary);
+  animation: a2-stepitem-pulse 1.2s ease-in-out infinite;
+}
+@keyframes a2-stepitem-pulse {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%      { transform: scale(1.3); opacity: 0.6; }
+}
+.a2-stepitem-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--a2ui-panel-2);
+  border: 1px solid var(--a2ui-border);
+  color: var(--a2ui-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.a2-stepitem-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.a2-stepitem-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--a2ui-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}
+.a2-stepitem.status-completed .a2-stepitem-title { color: var(--a2ui-muted); }
+.a2-stepitem.status-pending .a2-stepitem-title   { color: var(--a2ui-muted); }
+.a2-stepitem-progress {
+  font-size: 10px;
+  color: var(--a2ui-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 右侧状态 pill —— 9-10px 字、rounded-md、色块浅底，与你原代码一致 */
+.a2-stepitem-pill {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.pill-completed {
+  background: rgba(34, 197, 94, 0.16);
+  color: var(--a2ui-success);
+}
+.pill-active {
+  background: rgba(0, 191, 255, 0.18);
+  color: var(--a2ui-primary);
+}
+.pill-pending {
+  background: var(--a2ui-panel-2);
+  color: var(--a2ui-muted);
+}
+
+/* ---- StepProgress (top strip inside the right card) ---- */
+.a2-stepprogress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid var(--a2ui-border);
+}
+.a2-stepprogress-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--a2ui-text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.a2-stepprogress-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.a2-stepprogress-label {
+  font-size: 11px;
+  color: var(--a2ui-muted);
+  font-variant-numeric: tabular-nums;
+}
+.a2-stepprogress-percent {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--a2ui-primary);
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+  text-align: right;
+}
+.a2-stepprogress-bar {
+  width: 128px;
+  height: 6px;
+  background: var(--a2ui-panel-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.a2-stepprogress-fill {
+  height: 100%;
+  background: var(--a2ui-primary);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+/* ---- DataTable (artifact table inside the right card body) ---- */
+.a2-datatable {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow: auto;
+  background: var(--a2ui-bg);
+  max-height: 100%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+}
+.a2-datatable table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.a2-datatable thead {
+  position: sticky;
+  top: 0;
+  background: var(--a2ui-panel-2);
+  z-index: 1;
+}
+.a2-datatable th {
+  text-align: left;
+  padding: 9px 14px;
+  font-weight: 700;
+  color: var(--a2ui-muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--a2ui-border);
+  white-space: nowrap;
+}
+.a2-datatable td {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--a2ui-text);
+  vertical-align: top;
+  word-break: break-word;
+  font-size: 12px;
+}
+.a2-datatable tbody tr:last-child td { border-bottom: none; }
+.a2-datatable tbody tr { transition: background 0.1s; }
+.a2-datatable tbody tr:hover { background: rgba(0, 191, 255, 0.06); }
+.a2-datatable-empty {
+  border: 1px dashed var(--a2ui-border);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  color: var(--a2ui-muted);
+  font-size: 12px;
+}
+
+/* ---- CardFooter (bottom action bar; horizontal, with overflow → "更多" menu) ---- */
+.a2-cardfooter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--a2ui-border);
+  background: rgba(255, 255, 255, 0.02);
+  min-height: 48px;
+}
+.a2-cardfooter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.a2-cardfooter-item {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+/* In the footer, Buttons/TextFields can be a bit smaller and compact. */
+.a2-cardfooter-item .a2-button { padding: 6px 12px; font-size: 12px; }
+.a2-cardfooter-item .a2-input { padding: 6px 10px; font-size: 12px; min-width: 0; }
+
+/* "更多 ▾" trigger + dropdown */
+.a2-cardfooter-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+.a2-cardfooter-caret {
+  margin-left: 4px;
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+.a2-cardfooter-caret.open { transform: rotate(180deg); }
+
+.a2-cardfooter-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-width: 180px;
+  background: var(--a2ui-panel);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 50;
+}
+.a2-cardfooter-menuitem {
+  padding: 4px 6px;
+  border-radius: 6px;
+  display: flex;
+}
+.a2-cardfooter-menuitem:hover { background: var(--a2ui-panel-2); }
+/* Inside the menu, give Buttons a clean full-width look. */
+.a2-cardfooter-menuitem .a2-button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+/* ---- 子组件容器：在 Row 内确保左固定宽 + 右撑满 ---- */
+.a2-steplist-wrap {
+  flex: 0 0 auto;
+  width: 220px;
+  max-width: 100%;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--a2ui-border);
+  padding-right: 8px;
+}
+.a2-datatable-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.a2-datatable-wrap .a2-datatable { flex: 1; }
 
 .a2-tabs-bar {
   display: flex;
@@ -495,7 +1074,11 @@ button { font-family: inherit; }
 }
 .gallery-surface {
   width: min(100%, 560px);
-  align-self: center;
+  /* safe center：内容比画布矮时垂直居中；一旦超出画布高度，自动退化为
+     顶部对齐，保证顶部可达、可向下滚动。否则普通 align-self:center 会
+     把卡片顶部推出可视区，而 overflow:auto 在 cross 轴上又滚不到顶——
+     即“卡片顶部被挡住、上下滚动都没用”的根因。 */
+  align-self: safe center;
 }
 .gallery-empty {
   margin: auto;

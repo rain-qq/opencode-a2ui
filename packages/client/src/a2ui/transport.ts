@@ -4,7 +4,7 @@
  */
 
 import type { A2UIEnvelope, ActionPayload } from "@a2ui/protocol";
-import { snapshotSurfaceDataModels, useA2UI } from "./store.js";
+import { snapshotSurfaceDataModels, useA2UI, type AgentSelection } from "./store.js";
 
 interface SSEHandlers {
   onEnvelope: (env: A2UIEnvelope) => void;
@@ -130,11 +130,22 @@ function makeHandlers() {
   } satisfies SSEHandlers;
 }
 
+/** Strip empty buckets so the backend payload stays compact. */
+function compactSelection(s: AgentSelection): AgentSelection | undefined {
+  const out: AgentSelection = { agents: s.agents, skills: s.skills, mcps: s.mcps };
+  const hasAny = out.agents.length + out.skills.length + out.mcps.length > 0;
+  return hasAny ? out : undefined;
+}
+
 export async function sendChat(message: string) {
-  const { sessionId, setBusy, pushConversation } = useA2UI.getState();
+  const { sessionId, setBusy, pushConversation, selection } = useA2UI.getState();
   pushConversation({ type: "user_message", text: message });
   setBusy(true);
-  await postSSE("/api/chat", { sessionId, message }, makeHandlers());
+  await postSSE(
+    "/api/chat",
+    { sessionId, message, selection: compactSelection(selection) },
+    makeHandlers()
+  );
 }
 
 export async function sendAction(
@@ -143,7 +154,7 @@ export async function sendAction(
   sourceComponentId: string | undefined,
   context: Record<string, unknown>
 ) {
-  const { sessionId, setBusy, pushConversation, surfaces } = useA2UI.getState();
+  const { sessionId, setBusy, pushConversation, surfaces, selection } = useA2UI.getState();
 
   const action: ActionPayload = {
     name,
@@ -160,5 +171,9 @@ export async function sendAction(
   pushConversation({ type: "system_message", text: `→ action ${name} on ${surfaceId}` });
   setBusy(true);
 
-  await postSSE("/api/action", { sessionId, action }, makeHandlers());
+  await postSSE(
+    "/api/action",
+    { sessionId, action, selection: compactSelection(selection) },
+    makeHandlers()
+  );
 }

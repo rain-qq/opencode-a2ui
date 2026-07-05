@@ -19,15 +19,25 @@ import { appendMessage } from "../session/store.js";
 import { endSSE, sendEvent, startSSE } from "./sse.js";
 import { withA2UIAdapter } from "./adapter/a2ui.js";
 import { A2UI_INSTRUCTIONS } from "./adapter/prompt.js";
+import { buildSelectionPrefix, getRegistry } from "../agent/registry.js";
+
+/** Client-supplied selection of skills / mcp servers / subagents. */
+interface Selection {
+  agents?: string[];
+  skills?: string[];
+  mcps?: string[];
+}
 
 interface ChatBody {
   sessionId?: string;
   message?: string;
+  selection?: Selection;
 }
 
 interface ActionBody {
   sessionId?: string;
   action?: ActionPayload;
+  selection?: Selection;
 }
 
 /** Serialize an ActionPayload into a single text message for opencode. */
@@ -79,22 +89,28 @@ export async function createApp(): Promise<FastifyInstance> {
 
   app.get("/health", async () => ({ ok: true }));
 
+  /** Expose the static skill/mcp/subagent registry to the frontend picker. */
+  app.get("/api/agents", async () => getRegistry());
+
   app.post<{ Body: ChatBody }>("/api/chat", async (req, reply) => {
-    const { sessionId, message } = req.body ?? {};
+    const { sessionId, message, selection } = req.body ?? {};
     if (!sessionId || typeof message !== "string") {
       reply.code(400);
       return { error: "sessionId and message required" };
     }
 
-    app.log.info({ sessionId }, "chat turn");
-    appendMessage(sessionId, { role: "user", content: message, ts: Date.now() });
+    const prefix = buildSelectionPrefix(selection);
+    const finalMessage = prefix ? `${prefix}\n\n${message}` : message;
+
+    app.log.info({ sessionId, selection }, "chat turn");
+    appendMessage(sessionId, { role: "user", content: finalMessage, ts: Date.now() });
 
     startSSE(reply);
     await pipeSse(
       reply,
       streamWithAdapter(
         runAgent(
-          { sessionId, message },
+          { sessionId, message: finalMessage },
           { firstMessagePrefix: A2UI_INSTRUCTIONS }
         )
       )
@@ -102,7 +118,7 @@ export async function createApp(): Promise<FastifyInstance> {
   });
 
   app.post<{ Body: ActionBody }>("/api/action", async (req, reply) => {
-    const { sessionId, action } = req.body ?? {};
+    const { sessionId, action, selection } = req.body ?? {};
     if (!sessionId || !action?.name) {
       reply.code(400);
       return { error: "sessionId and action required" };
@@ -113,9 +129,12 @@ export async function createApp(): Promise<FastifyInstance> {
       "action turn"
     );
     const serialized = actionToMessage(action);
+    const prefix = buildSelectionPrefix(selection);
+    const finalMessage = prefix ? `${prefix}\n\n${serialized}` : serialized;
+
     appendMessage(sessionId, {
       role: "user",
-      content: serialized,
+      content: finalMessage,
       ts: Date.now(),
     });
 
@@ -123,7 +142,7 @@ export async function createApp(): Promise<FastifyInstance> {
     await pipeSse(
       reply,
       streamWithAdapter(
-        runAgent({ sessionId, message: serialized })
+        runAgent({ sessionId, message: finalMessage })
         // no firstMessagePrefix: the prefix is already in the session from the
         // first /api/chat call, and re-injecting would pollute context.
       )

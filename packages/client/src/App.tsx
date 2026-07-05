@@ -3,6 +3,7 @@ import { useA2UI } from "./a2ui/store.js";
 import { sendChat } from "./a2ui/transport.js";
 import { ConversationView } from "./conversation/ConversationView.js";
 import { ComponentGallery } from "./gallery/ComponentGallery.js";
+import { AgentPicker } from "./agent/AgentPicker.js";
 
 export function App() {
   const [view, setView] = useState<"chat" | "gallery">("chat");
@@ -74,15 +75,23 @@ function ChatView({ onOpenGallery }: { onOpenGallery: () => void }) {
         </div>
 
         <div className="chat-input">
-          <input
-            value={input}
-            placeholder="Ask the agent to render something or call a tool…"
-            disabled={busy}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
-            }}
-          />
+          {/* The picker lives INSIDE the input field — the three trigger
+              buttons are affixed to the left of the text input, ChatGPT-style.
+              .chat-input-field is the styled "box"; the bare <input> fills the
+              rest. Send stays a direct child of .chat-input so the chip styles
+              aren't clobbered by the Send-button rule. */}
+          <div className="chat-input-field">
+            <AgentPicker />
+            <input
+              value={input}
+              placeholder="Ask the agent to render something or call a tool…"
+              disabled={busy}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+            />
+          </div>
           <button onClick={submit} disabled={busy || !input.trim()}>
             Send
           </button>

@@ -34,6 +34,49 @@ export const BASIC_CATALOG: ComponentSpec[] = [
   { name: "DateTimeInput", kind: "leaf", description: "Date/time picker.", props: "label?: DynamicString; value: DynamicString" },
   { name: "ChoicePicker", kind: "leaf", description: "Single-choice picker.", props: "label?: DynamicString; value: DynamicString; options: DynamicStringList" },
   { name: "Slider", kind: "leaf", description: "Numeric slider.", props: "label?: DynamicString; value: DynamicNumber; min?: number; max?: number; step?: number" },
+
+  // Process / dashboard helpers — used together to render an execution
+  // console: left-side step timeline, top progress strip, body table.
+  {
+    name: "StepList",
+    kind: "container-multi",
+    description:
+      "Vertical timeline of process steps. Children iterate a template over a steps array; each item shows num/title/status and is clickable. Selection highlight is driven by the template item's `selected` field, independent of `status`.",
+    props:
+      'children: ChildList (template: { path: "/steps", componentId: "step-item" }); emptyHint?: DynamicString',
+  },
+  {
+    name: "StepItem",
+    kind: "leaf",
+    description:
+      "Template row rendered by StepList for each entry in the steps array. status drives the marker (completed=check, active=pulse dot, pending=number); selected independently highlights the currently focused step.",
+    props:
+      'num: DynamicString; title: DynamicString; status: DynamicString ("completed"|"active"|"pending"); progress?: DynamicString; selected?: DynamicBoolean; action?: ActionSpec',
+  },
+  {
+    name: "StepProgress",
+    kind: "leaf",
+    description:
+      "Header strip showing the current step title plus a percent and a progress bar.",
+    props:
+      "title: DynamicString; percent: DynamicNumber (0-100); progressLabel?: DynamicString",
+  },
+  {
+    name: "DataTable",
+    kind: "leaf",
+    description:
+      "Tabular artifact view: column headers + string rows. Useful as the 'middle product' panel of a step.",
+    props:
+      "columns: DynamicStringList; rows: DynamicStringList (array of arrays); emptyHint?: DynamicString",
+  },
+  {
+    name: "CardFooter",
+    kind: "container-multi",
+    description:
+      "Bottom action bar of a card-like surface. Children are laid out horizontally; items that overflow the available width are collected into a '更多' dropdown menu. Each child keeps its original action semantics.",
+    props:
+      'children: ChildList (Button / TextField / etc.)',
+  },
 ];
 
 export const BASIC_FUNCTIONS = [

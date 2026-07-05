@@ -871,6 +871,328 @@ const linksDemo: A2UIEnvelope[] = [
   }),
 ];
 
+/* ============================================================ *
+ * 10. 执行过程控制台 —— 渐进式渲染：左侧步骤列表 → 右侧详情
+ *
+ * 布局：
+ *   Card
+ *   └─ Column
+ *      ├─ Row
+ *      │  ├─ StepList     (左侧：5 步时间轴)
+ *      │  └─ DataTable    (右侧：当前步骤产物)
+ *      ├─ StepProgress    (顶部进度条)
+ *      └─ CardFooter      (底部操作栏)
+ *
+ * 渐进节奏（envelope 顺序）：
+ *   ① createSurface         —— 空画布
+ *   ② Card → Column         —— 容器到位
+ *   ③ Column → Row          —— 双栏骨架
+ *   ④ StepList + step-item  —— 左侧框架就位
+ *   ⑤ updateDataModel /steps —— 5 步数据填充，左侧立起来
+ *   ⑥ Row.append(table)     —— 右侧详情区开框
+ *   ⑦ DataTable             —— 表格内容
+ *   ⑧ Column.append(progress) + StepProgress —— 顶部进度条
+ *   ⑨ Column.append(footer) + CardFooter + 各 Button —— 底部操作栏
+ *
+ * 关键演示点：
+ *   - ChildList 模板 + 渐进 dataModel：左侧先有"骨架"，再灌数据
+ *   - step-item 字段全部用 {path} 相对路径，scopePath 自动落到每个 item
+ *   - Column.children 数组累积：先只装 Row，渐进追加 progress/footer
+ *   - CardFooter 子组件溢出时折叠到"更多"下拉（窄画布演示）
+ * ============================================================ */
+const processConsole: A2UIEnvelope[] = [
+  // ① 建 surface
+  env({ createSurface: { surfaceId: "g_console", catalogId: BASIC_CATALOG_ID } }),
+
+  // ② 容器：Card → Column（暂时只装 split，后续渐进追加）
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [{ id: "root", component: "Card", child: "col" }],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "col",
+          component: "Column",
+          children: ["split"],
+        },
+      ],
+    },
+  }),
+
+  // ③ 双栏骨架：Row
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "split",
+          component: "Row",
+          children: ["steplist"],
+        },
+      ],
+    },
+  }),
+
+  // ④ 左侧：StepList + step-item 模板（先建框架，数据下一帧灌入）
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "steplist",
+          component: "StepList",
+          emptyHint: "暂无步骤",
+          children: { path: "/steps", componentId: "step-item" },
+        },
+      ],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "step-item",
+          component: "StepItem",
+          num: { path: "num" },
+          title: { path: "title" },
+          status: { path: "status" },
+          progress: { path: "progress" },
+          selected: { path: "selected" },
+          action: {
+            event: {
+              name: "selectStep",
+              context: { stepId: { path: "id" } },
+            },
+          },
+        },
+      ],
+    },
+  }),
+
+  // ⑤ 左侧数据：5 步数组到位（selected 标记当前选中的步骤，与 status 解耦）
+  env({
+    updateDataModel: {
+      surfaceId: "g_console",
+      path: "/steps",
+      value: [
+        { id: "step-1", num: "1", title: "需求拆解",   status: "completed", progress: "1/5", selected: false },
+        { id: "step-2", num: "2", title: "测试项生成", status: "active",    progress: "2/5", selected: true  },
+        { id: "step-3", num: "3", title: "测试用例生成", status: "pending",  progress: "3/5", selected: false },
+        { id: "step-4", num: "4", title: "测试数据生成", status: "pending",  progress: "4/5", selected: false },
+        { id: "step-5", num: "5", title: "XML 报告生成", status: "pending",  progress: "5/5", selected: false },
+      ],
+    },
+  }),
+
+  // ⑥ 右侧详情区开框：Row 追加 table
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "split",
+          component: "Row",
+          children: ["steplist", "table"],
+        },
+      ],
+    },
+  }),
+
+  // ⑦ 右侧 DataTable
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "table",
+          component: "DataTable",
+          columns: ["一级测试项", "二级测试项", "测试类型", "优先级"],
+          rows: [
+            ["账号登录",   "正常登录-账号密码",       "功能测试", "P0"],
+            ["账号登录",   "密码错误",                "功能测试", "P0"],
+            ["账号登录",   "账号不存在",              "功能测试", "P1"],
+            ["账号登录",   "账号锁定",                "安全测试", "P0"],
+            ["微信登录",   "微信授权登录",            "功能测试", "P0"],
+            ["第三方登录", "微信登录-新用户自动绑定",  "功能测试", "P1"],
+          ],
+          emptyHint: "当前步骤尚未产出表格",
+        },
+      ],
+    },
+  }),
+
+  // ⑧ 顶部 StepProgress —— Column 头部插入 progress + 进度条组件
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "col",
+          component: "Column",
+          children: ["progress", "split"],
+        },
+      ],
+    },
+  }),
+  env({
+    updateDataModel: {
+      surfaceId: "g_console",
+      path: "/currentStep",
+      value: {
+        title: "当前步骤：2/5 测试项生成",
+        progressLabel: "2/5",
+        percent: 65,
+      },
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "progress",
+          component: "StepProgress",
+          title: { path: "/currentStep/title" },
+          progressLabel: { path: "/currentStep/progressLabel" },
+          percent: { path: "/currentStep/percent" },
+        },
+      ],
+    },
+  }),
+
+  // ⑨ 底部操作栏 —— Column 在尾部追加 footer（progress 仍留在顶部）
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "col",
+          component: "Column",
+          children: ["progress", "split", "footer"],
+        },
+      ],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "footer",
+          component: "CardFooter",
+          children: ["footer-input", "btn-track", "btn-retry", "btn-next", "btn-export"],
+        },
+      ],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "footer-input",
+          component: "TextField",
+          placeholder: "输入指令微调本步骤数据...",
+          value: { path: "/footerInput" },
+        },
+      ],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "btn-track",
+          component: "Button",
+          text: "追问/调整",
+          action: { event: { name: "refineStep", context: { input: { path: "/footerInput" } } } },
+        },
+      ],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "btn-retry",
+          component: "Button",
+          text: "回退",
+          action: { event: { name: "prevStep" } },
+        },
+      ],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "btn-next",
+          component: "Button",
+          variant: "primary",
+          text: "确认并下一步",
+          action: { event: { name: "nextStep" } },
+        },
+      ],
+    },
+  }),
+  env({
+    updateComponents: {
+      surfaceId: "g_console",
+      components: [
+        {
+          id: "btn-export",
+          component: "Button",
+          text: "导出 Excel",
+          action: { functionCall: { call: "openUrl", args: { url: "about:blank" } } },
+        },
+      ],
+    },
+  }),
+
+  // —— 放映尾段：模拟"用户切换到第 3 步"，dataModel 整体刷新 —— //
+  env({
+    updateDataModel: {
+      surfaceId: "g_console",
+      path: "/currentStep",
+      value: {
+        title: "当前步骤：3/5 测试用例生成",
+        progressLabel: "3/5",
+        percent: 40,
+      },
+    },
+  }),
+  env({
+    updateDataModel: {
+      surfaceId: "g_console",
+      path: "/steps/1/status",
+      value: "completed",
+    },
+  }),
+  env({
+    updateDataModel: {
+      surfaceId: "g_console",
+      path: "/steps/2/status",
+      value: "active",
+    },
+  }),
+  // —— 选中态跟随：推进到 step-3 后，把高亮从 step-2 移到 step-3 —— //
+  env({
+    updateDataModel: { surfaceId: "g_console", path: "/steps/1/selected", value: false },
+  }),
+  env({
+    updateDataModel: { surfaceId: "g_console", path: "/steps/2/selected", value: true },
+  }),
+];
+
 export const DEMOS: GalleryDemo[] = [
   {
     id: "card",
@@ -935,5 +1257,13 @@ export const DEMOS: GalleryDemo[] = [
     category: "表单交互",
     surfaceId: "g_links",
     envelopes: linksDemo,
+  },
+  {
+    id: "console",
+    name: "执行过程控制台",
+    description: "StepList + StepProgress + DataTable 联动",
+    category: "过程控制",
+    surfaceId: "g_console",
+    envelopes: processConsole,
   },
 ];
