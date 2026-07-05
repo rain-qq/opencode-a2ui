@@ -60,6 +60,34 @@ export const ENV = {
   OPENCODE_PRINT_LOGS: bool("OPENCODE_PRINT_LOGS", true),
   /** Heartbeat interval (ms) for "still running" trace events while idle. */
   OPENCODE_HEARTBEAT_MS: Number(process.env.OPENCODE_HEARTBEAT_MS ?? 3000),
+  /**
+   * Run a long-lived `opencode serve` headless server and route every
+   * `opencode run` through it via `--attach`. Eliminates the per-request
+   * opencode cold start (config load, provider warm-up). When disabled, or if
+   * the server fails to start at bootstrap, we fall back to per-request spawn
+   * — OPENCODE_SERVER_URL stays empty and buildArgs skips `--attach`.
+   */
+  OPENCODE_SERVER_ENABLED: bool("OPENCODE_SERVER_ENABLED", true),
+  /**
+   * Port for `opencode serve`. 0 lets opencode choose — it defaults to its
+   * convention port 4096, and falls back to a random port if 4096 is taken.
+   * Either way the ready line reports the actual port, so `--attach` always
+   * targets the right one. (Verified: serve is a single process whose pid ==
+   * the listener; taskkill /T /F cleans it up.)
+   */
+  OPENCODE_SERVER_PORT: Number(process.env.OPENCODE_SERVER_PORT ?? 0),
+  /** Hostname for `opencode serve`. Loopback only — never expose this raw. */
+  OPENCODE_SERVER_HOST: process.env.OPENCODE_SERVER_HOST ?? "127.0.0.1",
+  /**
+   * The `http://host:port` url of the running `opencode serve`. Captured at
+   * runtime from the serve process's "listening on …" line and written back
+   * here so defaultClientConfig() picks it up. Empty = per-run mode.
+   */
+  OPENCODE_SERVER_URL: process.env.OPENCODE_SERVER_URL ?? "",
+  /** Max ms to wait for `opencode serve` to print its listening url. */
+  OPENCODE_SERVER_STARTUP_TIMEOUT_MS: Number(
+    process.env.OPENCODE_SERVER_STARTUP_TIMEOUT_MS ?? 10000
+  ),
 };
 
 if (!ENV.OPENCODE_BIN) {

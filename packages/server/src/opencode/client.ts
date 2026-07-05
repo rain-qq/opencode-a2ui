@@ -3,9 +3,16 @@
  * and yields a merged stream of: parsed JSON events, stderr lines, heartbeats,
  * and the final exit. The agent runner maps this stream into AgentEvent.
  *
- * Per-run model: each call spawns a fresh opencode process. Multi-turn
- * continuity is achieved by passing `--session <id>` (captured from the first
- * run's events) on subsequent calls — opencode owns the conversation history.
+ * Two run modes, selected by config.serverUrl:
+ *  - Attached: serverUrl is set → adds `--attach <url>` so `opencode run`
+ *    connects to a long-lived `opencode serve` instead of booting a fresh
+ *    opencode instance. Cuts the per-request cold start (config load, provider
+ *    warm-up) at the cost of one bootstrap server process (see serve-manager).
+ *  - Per-run: serverUrl empty → each call spawns a fresh opencode process.
+ *
+ * Either way, multi-turn continuity is via `--session <id>` (captured from the
+ * first run's events) on subsequent calls — opencode owns the conversation
+ * history. stdout NDJSON format is identical in both modes.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -29,6 +36,11 @@ export interface OpencodeClientConfig {
   printLogs: boolean;
   /** "Still running" trace interval while the child produces no output. */
   heartbeatMs: number;
+  /**
+   * If set, route `opencode run` through a long-lived `opencode serve` via
+   * `--attach <url>`. Empty = per-request spawn (cold start every turn).
+   */
+  serverUrl?: string;
 }
 
 export function defaultClientConfig(): OpencodeClientConfig {
@@ -41,6 +53,7 @@ export function defaultClientConfig(): OpencodeClientConfig {
     pure: ENV.OPENCODE_PURE,
     printLogs: ENV.OPENCODE_PRINT_LOGS,
     heartbeatMs: ENV.OPENCODE_HEARTBEAT_MS,
+    serverUrl: ENV.OPENCODE_SERVER_URL,
   };
 }
 
@@ -74,6 +87,9 @@ export class OpencodeClient {
     if (c.pure) args.push("--pure");
     if (c.printLogs) args.push("--print-logs");
     if (c.workdir) args.push("--dir", c.workdir);
+    // Attach to a long-lived `opencode serve` when configured. Skips the
+    // per-request cold start (config/provider warm-up) by reusing the server.
+    if (c.serverUrl) args.push("--attach", c.serverUrl);
     if (opts.session) args.push("--session", opts.session);
     else if (opts.continueLast) args.push("--continue");
     if (c.model) args.push("-m", c.model);

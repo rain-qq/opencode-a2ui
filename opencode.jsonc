@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "minimaxi": {
+      "models": {
+        "minimax-m3": {
+          "reasoning": true,
+          "interleaved": { "field": "reasoning_content" },
+          "options": {
+            "reasoning_split": true,
+            "thinking": { "type": "adaptive" }
+          }
+        }
+      }
+    }
+  }
+}
