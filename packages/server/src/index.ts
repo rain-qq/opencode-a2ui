@@ -6,23 +6,23 @@
  *   pnpm agent "<message>"                 # fresh opencode session
  *   pnpm agent "follow up" -c              # continue opencode's last session
  *   pnpm agent "follow up" --session <id>  # continue a specific session
- *   pnpm agent "<message>" -m provider/model --agent <name>
+ *
+ * Under ACP, model/agent selection and tool-permission (the old `-m`,
+ * `--agent`, `--auto`) are opencode-config-driven (opencode.jsonc) rather than
+ * per-invocation CLI flags. `--pure` still applies.
  *
  * `text` events stream to stdout (the model's answer); everything else
  * (steps, tools, reasoning, traces, errors, the assigned session id) goes to
  * stderr so the answer can be piped cleanly.
  */
 
-import { OpencodeClient } from "./opencode/client.js";
+import { AcpClient } from "./opencode/acp-client.js";
 import { runAgent, type AgentEvent } from "./agent/runner.js";
 
 interface CliArgs {
   message: string;
   session?: string;
   continueLast?: boolean;
-  model?: string;
-  agent?: string;
-  auto?: boolean;
   pure?: boolean;
   help: boolean;
 }
@@ -42,12 +42,6 @@ function parseArgs(argv: string[]): CliArgs {
       case "--continue":
         out.continueLast = true;
         break;
-      case "--auto":
-        out.auto = true;
-        break;
-      case "--no-auto":
-        out.auto = false;
-        break;
       case "--pure":
         out.pure = true;
         break;
@@ -58,17 +52,8 @@ function parseArgs(argv: string[]): CliArgs {
       case "--session":
         out.session = take(++i);
         break;
-      case "-m":
-      case "--model":
-        out.model = take(++i);
-        break;
-      case "--agent":
-        out.agent = take(++i);
-        break;
       default:
         if (a.startsWith("--session=")) out.session = a.slice("--session=".length);
-        else if (a.startsWith("--model=")) out.model = a.slice("--model=".length);
-        else if (a.startsWith("--agent=")) out.agent = a.slice("--agent=".length);
         else parts.push(a);
     }
   }
@@ -76,24 +61,21 @@ function parseArgs(argv: string[]): CliArgs {
   return out;
 }
 
-const USAGE = `opencode agent runtime (底座)
+const USAGE = `opencode agent runtime (底座, ACP)
 
 用法:
   pnpm agent "<message>"                  开启新会话
   pnpm agent "follow up" -c               续接 opencode 最近一次会话
   pnpm agent "follow up" --session <id>   续接指定会话
-  pnpm agent "<message>" -m provider/model --agent <name>
 
 选项:
   -c, --continue              续接 opencode 最近会话
   -s, --session <id>          续接指定 opencode 会话 id
-  -m, --model <provider/model>
-      --agent <name>          指定 opencode agent
-      --auto / --no-auto      是否自动批准工具(默认开,headless 需要)
       --pure / --no-pure       是否禁用外部插件(默认开)
   -h, --help                  显示本帮助
 
-输出: 模型文本 → stdout;步骤/工具/思考/错误/会话 id → stderr。`;
+说明: ACP 链路下，模型/agent 选择与工具权限由 opencode 配置(opencode.jsonc)
+决定，不再是每次调用的 CLI 参数。`;
 
 const tty = !!process.stderr.isTTY;
 const c = {
@@ -166,24 +148,37 @@ async function main() {
     process.exit(1);
   }
 
-  const client = new OpencodeClient({
-    ...(args.model ? { model: args.model } : {}),
-    ...(args.agent ? { agent: args.agent } : {}),
-    ...(args.auto !== undefined ? { auto: args.auto } : {}),
+  const client = new AcpClient({
     ...(args.pure !== undefined ? { pure: args.pure } : {}),
   });
 
+  try {
+    await client.initialize();
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    const hint =
+      e.code === "ENOENT"
+        ? `找不到可执行文件。请把 OPENCODE_BIN 设为 opencode 真实可执行文件的绝对路径(Windows 上通常是 ...\\node_modules\\opencode-ai\\bin\\opencode.exe,不要用 .cmd/.ps1 shim)。`
+        : (err as Error).message;
+    process.stderr.write(c.red(`fatal: ACP initialize failed: ${hint}\n`));
+    process.exit(1);
+  }
+
   const emittedText = { value: false };
-  for await (const ev of runAgent(
-    {
-      sessionId: "cli",
-      message: args.message,
-      opencodeSessionId: args.session,
-      continueLast: args.continueLast,
-    },
-    { client }
-  )) {
-    printEvent(ev, emittedText);
+  try {
+    for await (const ev of runAgent(
+      {
+        sessionId: "cli",
+        message: args.message,
+        opencodeSessionId: args.session,
+        continueLast: args.continueLast,
+      },
+      { client }
+    )) {
+      printEvent(ev, emittedText);
+    }
+  } finally {
+    client.dispose();
   }
   if (emittedText.value) {
     // Ensure the answer ends with a newline so the next shell prompt is clean.
