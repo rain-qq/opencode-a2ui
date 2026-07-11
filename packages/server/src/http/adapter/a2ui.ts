@@ -160,6 +160,18 @@ interface FenceScan {
   residual: string;
 }
 
+/**
+ * Match a possibly-incomplete open-fence prefix at the end of `text`
+ * (e.g. "```", "```a2", "```a2ui"). Stream chunks often split the opener
+ * "```a2ui\n" across two events; we hold the partial prefix back instead of
+ * emitting it as text, or the following chunk loses its fence context and
+ * the whole envelope leaks out as a (wrongly typed) text event.
+ */
+function matchTrailingOpenPrefix(text: string): string {
+  const m = text.match(/```[a-zA-Z0-9_-]*$/);
+  return m ? m[0] : "";
+}
+
 function extractFences(buffer: string): FenceScan {
   const result: FenceScan = { emittedBefore: "", blocks: [], residual: "" };
   const OPEN_RE = openRe();
@@ -197,13 +209,28 @@ function extractFences(buffer: string): FenceScan {
     }
   }
   if (!foundAny) {
-    result.emittedBefore = buffer;
-    result.residual = "";
+    // No complete open fence anywhere. But the tail of the buffer may be a
+    // split opener ("```a2"...) whose "ui\n..." arrives in the next chunk.
+    // Hold it back instead of emitting it as text - otherwise the following
+    // chunk has no fence context and the envelope leaks out as plain text.
+    const held = matchTrailingOpenPrefix(buffer);
+    result.emittedBefore = held
+      ? buffer.slice(0, buffer.length - held.length)
+      : buffer;
+    result.residual = held;
     return result;
   }
   // Outer loop exited because no further open fence exists. Anything left
-  // between `consumed` and end of buffer is plain text — flush.
-  result.emittedBefore += buffer.slice(consumed);
+  // between `consumed` and end of buffer is plain text — flush. Same
+  // split-opener guard applies to this trailing text.
+  const tailText = buffer.slice(consumed);
+  const heldTail = matchTrailingOpenPrefix(tailText);
+  if (heldTail) {
+    result.emittedBefore += tailText.slice(0, tailText.length - heldTail.length);
+    result.residual = heldTail;
+  } else {
+    result.emittedBefore += tailText;
+  }
   return result;
 }
 
@@ -239,9 +266,10 @@ export async function* withA2UIAdapter(
     }
 
     buffer = scan.residual;
-    // Track whether the residual starts with an unclosed ```a2ui fence so
-    // non-text events between chunks know to hold their flush.
-    inFence = buffer.startsWith("```a2ui");
+    // Track whether the residual is (part of) an a2ui fence so non-text
+    // events between chunks know to hold their flush. Covers both a complete
+    // unclosed opener ("```a2ui\n...") and a split opener prefix ("```a2").
+    inFence = buffer.startsWith("```");
   }
 
   // Stream closed. If a fence was never closed, the residual is plain text —
