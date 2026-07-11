@@ -12,13 +12,18 @@ import type { NodeProps, NodeRenderer } from "../renderer.js";
 import { bindInput, bindValue, ensureBoolean, ensureNumber, ensureString, writeBack } from "../bind.js";
 import { firstFailure } from "../checks.js";
 import { sendAction } from "../transport.js";
+import { MarkdownView } from "../Markdown.js";
 
 /* --------------- Layout / Display --------------- */
 
 const Text: NodeRenderer = ({ node, ctx }) => {
   const text = ensureString(bindValue(node.text as DynamicValue<string>, ctx));
   const variant = (node.variant as string) || "body";
-  return <div className={`a2-text ${variant}`}>{text}</div>;
+  return (
+    <div className={`a2-text ${variant}`}>
+      <MarkdownView content={text} />
+    </div>
+  );
 };
 
 const Image: NodeRenderer = ({ node, ctx }) => {

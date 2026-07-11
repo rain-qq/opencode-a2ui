@@ -1,5 +1,6 @@
 import React from "react";
 import { renderNode } from "../a2ui/renderer.js";
+import { MarkdownView } from "../a2ui/Markdown.js";
 import { useA2UI, type ConversationItem } from "../a2ui/store.js";
 
 function preview(value: unknown, max = 520): string {
@@ -76,7 +77,9 @@ function ConversationRow({ item }: { item: ConversationItem }) {
     case "assistant_text":
       return (
         <div className="conversation-row conversation-row-agent">
-          <div className="conversation-bubble conversation-agent">{item.text}</div>
+          <div className="conversation-bubble conversation-agent">
+            <MarkdownView content={item.text} />
+          </div>
         </div>
       );
     case "system_message":
