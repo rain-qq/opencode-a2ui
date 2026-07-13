@@ -9,6 +9,7 @@ import { snapshotSurfaceDataModels, useA2UI, type AgentSelection } from "./store
 interface SSEHandlers {
   onEnvelope: (env: A2UIEnvelope) => void;
   onText?: (data: { text: string }) => void;
+  onReasoning?: (data: { text: string }) => void;
   onTrace?: (data: { message: string }) => void;
   onToolCall?: (data: { id: string; name: string; args: unknown }) => void;
   onToolResult?: (data: { id: string; name: string; result?: unknown; error?: string }) => void;
@@ -85,6 +86,9 @@ function processFrame(frame: string, handlers: SSEHandlers, done: () => void) {
   } else if (event === "text") {
     const parsed = parseJSON<{ text: string }>(data);
     if (parsed) handlers.onText?.(parsed);
+  } else if (event === "reasoning") {
+    const parsed = parseJSON<{ text: string }>(data);
+    if (parsed) handlers.onReasoning?.(parsed);
   } else if (event === "trace") {
     const parsed = parseJSON<{ message: string }>(data);
     if (parsed) handlers.onTrace?.(parsed);
@@ -103,10 +107,11 @@ function processFrame(frame: string, handlers: SSEHandlers, done: () => void) {
 }
 
 function makeHandlers() {
-  const { applyEnvelope, appendAgentText, setBusy, pushConversation } = useA2UI.getState();
+  const { applyEnvelope, appendAgentText, appendReasoning, setBusy, pushConversation } = useA2UI.getState();
   return {
     onEnvelope: (env: A2UIEnvelope) => applyEnvelope(env),
     onText: (data: { text: string }) => appendAgentText(data.text),
+    onReasoning: (data: { text: string }) => appendReasoning(data.text),
     onTrace: (data: { message: string }) =>
       pushConversation({ type: "trace", message: data.message }),
     onToolCall: (data: { id: string; name: string; args: unknown }) =>
@@ -137,13 +142,60 @@ function compactSelection(s: AgentSelection): AgentSelection | undefined {
   return hasAny ? out : undefined;
 }
 
-export async function sendChat(message: string) {
-  const { sessionId, setBusy, pushConversation, selection } = useA2UI.getState();
+/**
+ * Upload a `data:` URI (e.g. a base64 image from a file input or an inline
+ * markdown image) to the server's MinIO store and return its `/api/files/...`
+ * url. Returns null on any failure - callers fall back to the original. Shared
+ * by the Markdown image capture and the chat-input attachment flow.
+ */
+const uploadCache = new Map<string, string>();
+
+export async function uploadImage(dataUri: string): Promise<string | null> {
+  if (uploadCache.has(dataUri)) return uploadCache.get(dataUri)!;
+  try {
+    const res = await fetch("/api/images/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: dataUri }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { ok: boolean; url?: string };
+    if (!data.url) return null;
+    uploadCache.set(dataUri, data.url);
+    return data.url;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Image attachment passed alongside the chat message. `url` is the server-side
+ * `/api/files/...` path produced by `uploadImage()`. `mimeType` is optional
+ * (server figures it out from the URL); pass it when known to skip a server
+ * round-trip on lookup.
+ */
+export interface ChatAttachment {
+  url: string;
+  mimeType?: string;
+}
+
+export async function sendChat(
+  message: string,
+  attachments: ChatAttachment[] = []
+) {
+  const { sessionId, opencodeSessionId, setBusy, pushConversation, selection } =
+    useA2UI.getState();
   pushConversation({ type: "user_message", text: message });
   setBusy(true);
   await postSSE(
     "/api/chat",
-    { sessionId, message, selection: compactSelection(selection) },
+    {
+      sessionId,
+      message,
+      selection: compactSelection(selection),
+      ...(opencodeSessionId ? { opencodeSessionId } : {}),
+      ...(attachments.length ? { attachments } : {}),
+    },
     makeHandlers()
   );
 }
@@ -154,7 +206,8 @@ export async function sendAction(
   sourceComponentId: string | undefined,
   context: Record<string, unknown>
 ) {
-  const { sessionId, setBusy, pushConversation, surfaces, selection } = useA2UI.getState();
+  const { sessionId, opencodeSessionId, setBusy, pushConversation, surfaces, selection } =
+    useA2UI.getState();
 
   const action: ActionPayload = {
     name,
@@ -173,7 +226,30 @@ export async function sendAction(
 
   await postSSE(
     "/api/action",
-    { sessionId, action, selection: compactSelection(selection) },
+    {
+      sessionId,
+      action,
+      selection: compactSelection(selection),
+      ...(opencodeSessionId ? { opencodeSessionId } : {}),
+    },
     makeHandlers()
   );
+}
+
+/** Abort the in-flight turn for the current session. Best-effort. */
+export async function cancelChat(): Promise<void> {
+  const { sessionId, busy, setBusy } = useA2UI.getState();
+  if (!busy) return;
+  // Optimistic: unblock the UI immediately; the stream will end naturally or
+  // server will close on cancel.
+  setBusy(false);
+  try {
+    await fetch("/api/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+  } catch {
+    /* best-effort */
+  }
 }

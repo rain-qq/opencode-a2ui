@@ -127,11 +127,20 @@ export interface AcpRpcError {
   data?: unknown;
 }
 
-/** One prompt part. ACP prompts are arrays; we currently only emit text. */
-export interface AcpPromptPart {
-  type: "text";
-  text: string;
-}
+/**
+ * One prompt part. ACP prompts are arrays of typed content blocks; we emit
+ * `text` for the user message and `image` for file attachments.
+ *
+ * ACP's `ImageContent` only accepts INLINE base64 — it has no URL variant.
+ * So the runner (not the HTTP layer) pulls the image bytes from MinIO, base64
+ * encodes them, and stuffs them in `data`. Keeping the fetch here means the
+ * HTTP boundary only deals with `/api/files/...` refs (no buffer movement
+ * through SSE); the expensive base64 serialization happens once per turn,
+ * adjacent to the consumer that needs it.
+ */
+export type AcpPromptPart =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
 
 interface PendingRequest {
   resolve: (result: unknown) => void;

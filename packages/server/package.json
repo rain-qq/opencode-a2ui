@@ -14,7 +14,8 @@
     "@a2ui/protocol": "workspace:*",
     "@fastify/cors": "^9.0.1",
     "dotenv": "^16.4.5",
-    "fastify": "^4.28.1"
+    "fastify": "^4.28.1",
+    "minio": "^8.0.7"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",

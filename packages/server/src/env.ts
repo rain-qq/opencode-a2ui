@@ -57,6 +57,20 @@ export const ENV = {
   OPENCODE_ACP_STARTUP_TIMEOUT_MS: Number(
     process.env.OPENCODE_ACP_STARTUP_TIMEOUT_MS ?? 15000
   ),
+
+  /**
+   * MinIO object storage for conversation-generated images. Graceful: when
+   * MINIO_ENDPOINT is empty or the peer is unreachable, image capture is a
+   * no-op (original values pass through untouched). See storage/minio.ts.
+   */
+  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT ?? "",
+  MINIO_PORT: Number(process.env.MINIO_PORT ?? 9000),
+  MINIO_USE_SSL: bool("MINIO_USE_SSL", false),
+  MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY ?? "",
+  MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY ?? "",
+  MINIO_BUCKET: process.env.MINIO_BUCKET ?? "a2ui",
+  /** Force-disable even if endpoint is set (e.g. for local dev without MinIO). */
+  MINIO_DISABLED: bool("MINIO_DISABLED", false),
 };
 
 if (!ENV.OPENCODE_BIN) {

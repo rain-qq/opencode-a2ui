@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useA2UI } from "./a2ui/store.js";
-import { sendChat } from "./a2ui/transport.js";
 import { ConversationView } from "./conversation/ConversationView.js";
 import { ComponentGallery } from "./gallery/ComponentGallery.js";
-import { AgentPicker } from "./agent/AgentPicker.js";
+import { HistorySidebar } from "./history/HistorySidebar.js";
+import { ChatInput } from "./chat/ChatInput.js";
 
 export function App() {
   const [view, setView] = useState<"chat" | "gallery">("chat");
@@ -25,30 +25,23 @@ export function App() {
 }
 
 function ChatView({ onOpenGallery }: { onOpenGallery: () => void }) {
-  const busy = useA2UI((s) => s.busy);
   const sessionId = useA2UI((s) => s.sessionId);
   const conversationLength = useA2UI((s) => s.conversation.length);
-  const reset = useA2UI((s) => s.reset);
-
-  const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [conversationLength, busy]);
-
-  function submit() {
-    const text = input.trim();
-    if (!text || busy) return;
-    setInput("");
-    sendChat(text);
-  }
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [conversationLength]);
 
   return (
     <div className="app">
+      <HistorySidebar />
       <div className="chat-pane">
         <div className="chat-header">
-          <div>
+          <div className="chat-header-title">
             A2UI Agent
             <small>{sessionId.slice(0, 14)}…</small>
           </div>
@@ -60,13 +53,6 @@ function ChatView({ onOpenGallery }: { onOpenGallery: () => void }) {
             >
               组件示例
             </button>
-            <button
-              className="a2-button borderless"
-              style={{ padding: "2px 8px", fontSize: 12 }}
-              onClick={reset}
-            >
-              new session
-            </button>
           </div>
         </div>
 
@@ -74,28 +60,7 @@ function ChatView({ onOpenGallery }: { onOpenGallery: () => void }) {
           <ConversationView />
         </div>
 
-        <div className="chat-input">
-          {/* The picker lives INSIDE the input field — the three trigger
-              buttons are affixed to the left of the text input, ChatGPT-style.
-              .chat-input-field is the styled "box"; the bare <input> fills the
-              rest. Send stays a direct child of .chat-input so the chip styles
-              aren't clobbered by the Send-button rule. */}
-          <div className="chat-input-field">
-            <AgentPicker />
-            <input
-              value={input}
-              placeholder="Ask the agent to render something or call a tool…"
-              disabled={busy}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
-              }}
-            />
-          </div>
-          <button onClick={submit} disabled={busy || !input.trim()}>
-            Send
-          </button>
-        </div>
+        <ChatInput />
       </div>
     </div>
   );

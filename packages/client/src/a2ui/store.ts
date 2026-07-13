@@ -25,12 +25,13 @@ export interface Surface {
 export type ConversationItem =
   | { id: string; type: "user_message"; text: string; ts: number }
   | { id: string; type: "assistant_text"; text: string; ts: number }
+  | { id: string; type: "reasoning"; text: string; ts: number }
   | { id: string; type: "system_message"; text: string; ts: number }
   | { id: string; type: "trace"; message: string; ts: number }
   | { id: string; type: "tool_call"; callId: string; name: string; args: unknown; ts: number }
   | { id: string; type: "tool_result"; callId: string; name: string; result?: unknown; error?: string; ts: number }
   | { id: string; type: "error"; code: string; message: string; ts: number }
-  | { id: string; type: "surface"; surfaceId: SurfaceId; ts: number };
+  | { id: string; type: "surface"; surfaceId: SurfaceId; archived?: boolean; ts: number };
 
 /** Input shape for pushConversation: ConversationItem minus id/ts, distributed
  *  across the union so per-member fields (text/message/callId/code/surfaceId)
@@ -44,18 +45,33 @@ export type ConversationItemInput = {
 
 interface A2UIState {
   sessionId: string;
+  /** opencode/ACP session id (ses_...) for resume. Empty on a fresh chat. */
+  opencodeSessionId: string;
   busy: boolean;
   surfaces: Record<SurfaceId, Surface>;
   surfaceOrder: SurfaceId[];
   conversation: ConversationItem[];
 
+  /** Conversation history sidebar (file-backed on the server). */
+  history: HistoryEntry[];
+  historyLoading: boolean;
+  historyError: string | null;
+
   setBusy(b: boolean): void;
   pushConversation(item: ConversationItemInput): void;
   appendAgentText(text: string): void;
+  appendReasoning(text: string): void;
   ensureSurfaceConversationItem(surfaceId: SurfaceId): void;
   applyEnvelope(env: A2UIEnvelope): void;
   writeData(surfaceId: SurfaceId, pointer: string, value: unknown): void;
   reset(): void;
+  newChat(): void;
+
+  // --- conversation history ---
+  fetchHistory(): Promise<void>;
+  loadHistory(id: string): Promise<void>;
+  deleteHistory(id: string): Promise<void>;
+  renameHistory(id: string, title: string): Promise<void>;
 
   // --- registry + selection (skill / mcp / subagent picker) ---
   // Declared inline (not via `declare module` self-augmentation, which TS does
@@ -108,10 +124,15 @@ function unwrapItems(v: unknown): unknown {
 
 export const useA2UI = create<A2UIState>((set, get) => ({
   sessionId: makeSessionId(),
+  opencodeSessionId: "",
   busy: false,
   surfaces: {},
   surfaceOrder: [],
   conversation: [],
+
+  history: [],
+  historyLoading: false,
+  historyError: null,
 
   setBusy: (b) => set({ busy: b }),
   pushConversation: (item) =>
@@ -129,6 +150,22 @@ export const useA2UI = create<A2UIState>((set, get) => ({
       }
       return {
         conversation: [...s.conversation, stamp({ type: "assistant_text", text })],
+      };
+    }),
+
+  appendReasoning: (text) =>
+    set((s) => {
+      // Reasoning streams as deltas too; accumulate into the last reasoning
+      // block. A non-reasoning event in between closes the block so each
+      // contiguous thinking span stays one collapsible block.
+      const last = s.conversation[s.conversation.length - 1];
+      if (last && last.type === "reasoning") {
+        const next = [...s.conversation];
+        next[next.length - 1] = { ...last, text: last.text + text };
+        return { conversation: next };
+      }
+      return {
+        conversation: [...s.conversation, stamp({ type: "reasoning", text })],
       };
     }),
 
@@ -258,6 +295,7 @@ export const useA2UI = create<A2UIState>((set, get) => ({
   reset: () =>
     set({
       sessionId: makeSessionId(),
+      opencodeSessionId: "",
       surfaces: {},
       surfaceOrder: [],
       conversation: [],
@@ -266,6 +304,85 @@ export const useA2UI = create<A2UIState>((set, get) => ({
       // global chat-prefs, not per-session state. Clearing them here would
       // surprise the user mid-conversation.
     }),
+
+  /** Start a fresh conversation (sidebar "new chat"). The new session's history
+   *  entry is created server-side on its first turn. */
+  newChat: () =>
+    set({
+      sessionId: makeSessionId(),
+      opencodeSessionId: "",
+      surfaces: {},
+      surfaceOrder: [],
+      conversation: [],
+      busy: false,
+    }),
+
+  // --- conversation history ---
+  fetchHistory: async () => {
+    if (get().historyLoading) return;
+    set({ historyLoading: true, historyError: null });
+    try {
+      const res = await fetch("/api/history");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as HistoryEntry[];
+      set({ history: data, historyLoading: false });
+    } catch (err) {
+      set({
+        historyLoading: false,
+        historyError: (err as Error).message ?? "fetch failed",
+      });
+    }
+  },
+
+  loadHistory: async (id) => {
+    try {
+      const res = await fetch(`/api/history/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as {
+        entry: HistoryEntry;
+        transcript: HistoryTranscriptItem[];
+      };
+      const conversation: ConversationItem[] = data.transcript.map((t) =>
+        stamp(transcriptToItem(t))
+      );
+      set({
+        sessionId: data.entry.id,
+        opencodeSessionId: data.entry.opencodeSessionId,
+        surfaces: {},
+        surfaceOrder: [],
+        conversation,
+        busy: false,
+      });
+    } catch (err) {
+      set({ historyError: (err as Error).message ?? "load failed" });
+    }
+  },
+
+  deleteHistory: async (id) => {
+    const prev = get().history;
+    set({ history: prev.filter((h) => h.id !== id) });
+    try {
+      await fetch(`/api/history/${id}`, { method: "DELETE" });
+    } catch {
+      set({ history: prev });
+    }
+  },
+
+  renameHistory: async (id, title) => {
+    const prev = get().history;
+    set({
+      history: prev.map((h) => (h.id === id ? { ...h, title } : h)),
+    });
+    try {
+      await fetch(`/api/history/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+    } catch {
+      set({ history: prev });
+    }
+  },
 
   // --- registry + selection ---
   registry: null,
@@ -334,4 +451,83 @@ export interface AgentSelection {
   agents: string[];
   skills: string[];
   mcps: string[];
+}
+
+/* ============================================================ *
+ *  Conversation history (server-side file-backed)
+ * ============================================================ */
+
+export interface HistoryEntry {
+  id: string;
+  opencodeSessionId: string;
+  title: string;
+  preview: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HistoryTranscriptItem {
+  type:
+    | "user_message"
+    | "assistant_text"
+    | "reasoning"
+    | "trace"
+    | "tool_call"
+    | "tool_result"
+    | "error"
+    | "surface";
+  ts: number;
+  text?: string;
+  message?: string;
+  callId?: string;
+  name?: string;
+  args?: unknown;
+  result?: unknown;
+  error?: string;
+  code?: string;
+  surfaceId?: string;
+  archived?: boolean;
+}
+
+/**
+ * Convert a stored transcript item into a ConversationItemInput for the
+ * store. Fields are passed through verbatim so the replayed bubble keeps the
+ * same look (markdown, tool grouping, etc).
+ */
+function transcriptToItem(
+  t: HistoryTranscriptItem
+): ConversationItemInput {
+  switch (t.type) {
+    case "user_message":
+      return { type: "user_message", text: t.text ?? "" };
+    case "assistant_text":
+      return { type: "assistant_text", text: t.text ?? "" };
+    case "reasoning":
+      return { type: "reasoning", text: t.text ?? "" };
+    case "trace":
+      return { type: "trace", message: t.message ?? "" };
+    case "tool_call":
+      return {
+        type: "tool_call",
+        callId: t.callId ?? "",
+        name: t.name ?? "tool",
+        args: t.args,
+      };
+    case "tool_result":
+      return {
+        type: "tool_result",
+        callId: t.callId ?? "",
+        name: t.name ?? "tool",
+        result: t.result,
+        error: t.error,
+      };
+    case "error":
+      return { type: "error", code: t.code ?? "ERR", message: t.message ?? t.error ?? "" };
+    case "surface":
+      return {
+        type: "surface",
+        surfaceId: t.surfaceId ?? "",
+        archived: t.archived,
+      };
+  }
 }

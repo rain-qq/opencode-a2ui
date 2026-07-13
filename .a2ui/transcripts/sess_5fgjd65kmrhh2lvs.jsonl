@@ -1,0 +1,9 @@
+{"type":"user_message","ts":1783841356199,"text":"查询演示餐厅数据，并渲染成列表。"}
+{"type":"assistant_text","ts":1783841363273,"text":"我先看看仓库里有没有现成的演示餐厅数据。"}
+{"type":"tool_call","ts":1783841363274,"callId":"call_019f553b143e73b29acaabac","name":"search","args":{"pattern":"**/restaurant*"}}
+{"type":"tool_call","ts":1783841363276,"callId":"call_019f553b143e73b29acaabb8","name":"search","args":{"pattern":"**/demo*.{json,ts,js}"}}
+{"type":"tool_result","ts":1783841363335,"callId":"call_019f553b143e73b29acaabac","name":"search","result":{"output":"No files found","metadata":{"count":0,"truncated":false}}}
+{"type":"tool_result","ts":1783841363364,"callId":"call_019f553b143e73b29acaabb8","name":"search","result":{"output":"D:\\workspace\\A2UI\\packages\\client\\src\\gallery\\demos.ts","metadata":{"count":1,"truncated":false}}}
+{"type":"tool_call","ts":1783841368711,"callId":"call_019f553b29fd7a40a62ac3e1","name":"search","args":{"pattern":"restaurant","path":"D:\\workspace\\A2UI\\packages\\client\\src\\gallery\\demos.ts"}}
+{"type":"tool_result","ts":1783841368854,"callId":"call_019f553b29fd7a40a62ac3e1","name":"search","result":{"output":"No files found","metadata":{"matches":0,"truncated":false}}}
+{"type":"assistant_text","ts":1783841375649,"text":"仓库里没有餐厅演示数据，我先用一组合理的示例数据渲染一个可点击的列表卡片。"}

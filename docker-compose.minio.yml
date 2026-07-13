@@ -1,0 +1,30 @@
+# Local MinIO for conversation image storage.
+#   docker compose -f docker-compose.minio.yml up -d
+# Then set in .env:
+#   MINIO_ENDPOINT=127.0.0.1
+#   MINIO_PORT=9000
+#   MINIO_ACCESS_KEY=a2ui_dev
+#   MINIO_SECRET_KEY=a2ui_dev_secret
+#   MINIO_BUCKET=a2ui
+# The server creates the bucket on first image upload (ensureBucket), so no
+# manual `mc mb` is needed.
+#
+# Console (browse buckets): http://127.0.0.1:9001  (login a2ui_dev / a2ui_dev_secret)
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: a2ui-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API (server reads/writes here)
+      - "9001:9001"   # web console
+    environment:
+      MINIO_ROOT_USER: a2ui_dev
+      MINIO_ROOT_PASSWORD: a2ui_dev_secret
+    volumes:
+      - a2ui-minio-data:/data
+    restart: unless-stopped
+
+volumes:
+  a2ui-minio-data:

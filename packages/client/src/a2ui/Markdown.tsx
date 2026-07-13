@@ -17,14 +17,65 @@
  * whole history each render.
  */
 
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
+import { uploadImage } from "./transport.js";
 
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeHighlight];
+
+/** A data: image URI (base64 or url-encoded). The only src form we capture
+ *  client-side - the browser has the bytes and can POST them. Remote http(s)
+ *  URLs are left as-is; local file paths can't be read from the browser and
+ *  are handled server-side only (via the A2UI Image component / tool results). */
+function isDataImageUri(src: unknown): boolean {
+  return typeof src === "string" && src.startsWith("data:image/");
+}
+
+/**
+ * <img> that uploads inline `data:` images to MinIO and swaps the src once the
+ * upload resolves. While uploading it shows a shimmer placeholder so the
+ * layout doesn't jump. Already-uploaded data URIs are cached in transport's
+ * uploadCache so re-renders (streaming) don't re-upload.
+ */
+function MarkdownImage({
+  src,
+  alt,
+  title,
+}: {
+  src?: string;
+  alt?: string;
+  title?: string;
+}) {
+  const [resolved, setResolved] = useState<string | undefined>(undefined);
+  const [loading, setLoading] = useState(false);
+  const capture = isDataImageUri(src);
+
+  useEffect(() => {
+    if (!capture || !src) return;
+    let cancelled = false;
+    setLoading(true);
+    uploadImage(src).then((url) => {
+      if (cancelled) return;
+      if (url) setResolved(url);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [src, capture]);
+
+  if (capture) {
+    if (resolved) {
+      return <img className="md-image" src={resolved} alt={alt} title={title} loading="lazy" />;
+    }
+    return <div className="md-image-placeholder" aria-label={alt ?? "uploading image"} />;
+  }
+  return <img className="md-image" src={src} alt={alt} title={title} loading="lazy" />;
+}
 
 const components: Components = {
   // Block code: framed container. rehype-highlight already colored the inner
@@ -39,6 +90,9 @@ const components: Components = {
       return <code className={className}>{children}</code>;
     }
     return <code className="md-code-inline">{children}</code>;
+  },
+  img({ src, alt, title }) {
+    return <MarkdownImage src={src as string | undefined} alt={alt} title={title} />;
   },
   a({ href, children, title }) {
     return (

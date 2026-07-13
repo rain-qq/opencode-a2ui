@@ -2,12 +2,14 @@
   --a2ui-bg: #0f1115;
   --a2ui-panel: #161a22;
   --a2ui-panel-2: #1d2230;
+  --a2ui-sidebar: #131722;
   --a2ui-border: #2a2f3d;
   --a2ui-text: #e6e9ef;
   --a2ui-muted: #8a93a6;
   --a2ui-primary: #00bfff;
   --a2ui-error: #ef4444;
   --a2ui-success: #22c55e;
+  --a2ui-warn: #f59e0b;
 }
 
 * { box-sizing: border-box; }
@@ -28,20 +30,25 @@ button { font-family: inherit; }
 .app {
   height: 100%;
   display: flex;
-  justify-content: center;
   background:
     radial-gradient(circle at 20% 0%, rgba(0, 191, 255, 0.08), transparent 30%),
     var(--a2ui-bg);
 }
 
 .chat-pane {
-  width: min(100%, 980px);
+  flex: 1;
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: color-mix(in srgb, var(--a2ui-panel) 84%, transparent);
   border-left: 1px solid var(--a2ui-border);
-  border-right: 1px solid var(--a2ui-border);
+}
+
+.chat-header-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .chat-header {
@@ -166,52 +173,222 @@ button { font-family: inherit; }
   margin-top: 8px;
 }
 
+/* ============================================================ *
+ *  Chat input (Coze-style two-row card)
+ *  Layout:
+ *    ┌────────────────────────────────────────────────────┐
+ *    │  [attachments chips]                               │
+ *    │  ┌──────────────────────────────────────────────┐  │   <-- textarea row
+ *    │  │ Ask the agent…                              │  │       (click anywhere
+ *    │  │                                              │  │        to focus, no
+ *    │  └──────────────────────────────────────────────┘  │        buttons inside)
+ *    │  [📎] [🤖 Agents] [✨ Skills] [🔌 MCPs]      [发送] │   <-- toolbar row
+ *    └────────────────────────────────────────────────────┘
+ *  Send / Stop anchors the bottom-right corner.
+ * ============================================================ */
+
 .chat-input {
-  padding: 14px 18px;
+  padding: 12px 18px 16px;
   border-top: 1px solid var(--a2ui-border);
-  display: flex;
-  gap: 10px;
   background: rgba(15, 17, 21, 0.92);
   position: relative; /* anchor for .agent-dropdown absolute positioning */
 }
-/* The "input box" is now a wrapper that holds the picker chips + the bare
-   text input — the three trigger buttons live INSIDE the field rather than
-   beside it (ChatGPT-style). */
-.chat-input-field {
-  flex: 1;
-  min-width: 0;
+
+.chat-input-card {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 6px 5px 8px;
+  flex-direction: column;
   background: var(--a2ui-panel-2);
   border: 1px solid var(--a2ui-border);
-  border-radius: 12px;
-  transition: border-color 0.12s;
+  border-radius: 14px;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
-.chat-input-field:focus-within { border-color: var(--a2ui-primary); }
-.chat-input-field input {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 8px;
+.chat-input-card:focus-within {
+  border-color: var(--a2ui-primary);
+  box-shadow: 0 0 0 3px rgba(0, 191, 255, 0.12);
+}
+
+/* The textarea is its own full-width row. Empty space inside the card is
+   intentionally clickable as textarea (no buttons overlap the typing area). */
+.chat-textarea {
+  width: 100%;
+  padding: 12px 14px;
   background: transparent;
   border: none;
   outline: none;
+  resize: none;
   color: var(--a2ui-text);
+  font: inherit;
   font-size: 14px;
+  line-height: 1.5;
+  max-height: 200px;
+  overflow-y: auto;
+  display: block;
 }
-/* Send button — scoped to a DIRECT child of .chat-input so it does NOT style
-   the picker trigger buttons nested inside .chat-input-field. */
-.chat-input > button {
-  padding: 10px 18px;
+.chat-textarea::placeholder { color: var(--a2ui-muted); }
+
+/* Toolbar below the textarea — left has tools, right has Send/Stop. */
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 6px 6px;
+  border-top: 1px solid var(--a2ui-border);
+  min-height: 44px;
+}
+.chat-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.chat-toolbar-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Tool buttons (paperclip etc.) — quiet, only highlight on hover. */
+.chat-tool-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--a2ui-muted);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.chat-tool-btn:hover:not(:disabled) {
+  color: var(--a2ui-text);
+  background: var(--a2ui-panel);
+}
+.chat-tool-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Send (right-bottom). Pill with icon. */
+.chat-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
   background: var(--a2ui-primary);
   color: #001a25;
   border: none;
-  border-radius: 12px;
-  font-weight: 600;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.06s;
+}
+.chat-send:hover:not(:disabled) { background: #2dd0ff; }
+.chat-send:active:not(:disabled) { transform: scale(0.98); }
+.chat-send:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Stop — red, replaces Send while busy. */
+.chat-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--a2ui-error);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13px;
   cursor: pointer;
 }
-.chat-input > button:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-stop:hover { background: rgba(239, 68, 68, 0.22); }
+.chat-stop-square {
+  width: 10px;
+  height: 10px;
+  background: currentColor;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Empty-state suggestion chips - sit ABOVE the input card, full width. */
+.chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.chat-suggestion {
+  padding: 6px 12px;
+  background: var(--a2ui-panel-2);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 999px;
+  color: var(--a2ui-text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+.chat-suggestion:hover {
+  background: var(--a2ui-border);
+  border-color: var(--a2ui-primary);
+}
+
+/* Attachment chips - live INSIDE the card, above the textarea. */
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 10px 4px;
+}
+.chat-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  background: var(--a2ui-panel);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--a2ui-text);
+}
+.chat-attachment.uploading {
+  border-color: rgba(0, 191, 255, 0.4);
+  color: var(--a2ui-muted);
+}
+.chat-attachment.error {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: var(--a2ui-error);
+}
+.chat-attachment-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--a2ui-bg);
+}
+.chat-attachment-name {
+  max-width: 140px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.chat-attachment-remove {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--a2ui-muted);
+  cursor: pointer;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+}
+.chat-attachment-remove:hover {
+  color: var(--a2ui-error);
+  background: rgba(239, 68, 68, 0.12);
+}
 
 /* ============================================================ *
  *  Agent / Skill / MCP picker (chat input footer)
@@ -232,18 +409,20 @@ button { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--a2ui-border);
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 8px;
-  color: var(--a2ui-text);
+  color: var(--a2ui-muted);
   cursor: pointer;
   font-size: 12px;
   line-height: 1.2;
+  font-weight: 600;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .agent-trigger:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--a2ui-text);
+  background: var(--a2ui-panel);
 }
 .agent-trigger.active {
   border-color: var(--a2ui-primary);
@@ -1297,4 +1476,412 @@ button { font-family: inherit; }
 }
 .md-code-block .hljs { background: transparent; padding: 0; color: inherit; }
 .md-code-block code { font-family: inherit; }
+
+/* ============================================================ *
+ *  Inline image (Markdown renderer)
+ *  Captured data: URIs become /api/files/... (server-side MinIO); while
+ *  uploading we show a shimmering placeholder so the bubble doesn't jump.
+ * ============================================================ */
+
+.md-image { max-width: 100%; border-radius: 8px; }
+.md-image-placeholder {
+  display: block;
+  width: 160px;
+  height: 100px;
+  background:
+    linear-gradient(110deg,
+      rgba(255,255,255,0.04) 30%,
+      rgba(255,255,255,0.10) 50%,
+      rgba(255,255,255,0.04) 70%
+    ),
+    var(--a2ui-panel-2);
+  background-size: 200% 100%;
+  border-radius: 8px;
+  animation: md-image-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes md-image-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ============================================================ *
+ *  ToolStep (Coze-style unified tool card)
+ *  Compact, collapsible card with status pill + spinner. Consecutive tools
+ *  are visually grouped with a connecting left line.
+ * ============================================================ */
+
+.toolstep-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 6px;
+  padding-left: 10px;
+}
+.toolstep-group::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: var(--a2ui-border);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.toolstep {
+  max-width: min(78%, 720px);
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--a2ui-border);
+  border-left-width: 3px;
+  border-radius: 10px;
+  overflow: hidden;
+  color: var(--a2ui-text);
+  transition: background 0.12s;
+}
+.toolstep-running { border-left-color: var(--a2ui-primary); background: rgba(0,191,255,0.05); }
+.toolstep-done    { border-left-color: var(--a2ui-success); }
+.toolstep-error   { border-left-color: var(--a2ui-error); }
+
+.toolstep-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+.toolstep-header:disabled { cursor: default; }
+.toolstep-header:not(:disabled):hover { background: rgba(255,255,255,0.03); }
+
+.toolstep-icon { font-size: 13px; flex-shrink: 0; }
+.toolstep-name {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toolstep-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+.toolstep-status-running { background: rgba(0,191,255,0.18); color: var(--a2ui-primary); }
+.toolstep-status-done    { background: rgba(34,197,94,0.16); color: var(--a2ui-success); }
+.toolstep-status-error   { background: rgba(239,68,68,0.18); color: var(--a2ui-error); }
+
+.toolstep-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: toolstep-spin 0.8s linear infinite;
+  display: inline-block;
+}
+@keyframes toolstep-spin { to { transform: rotate(360deg); } }
+
+.toolstep-chevron {
+  font-size: 10px;
+  color: var(--a2ui-muted);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.toolstep-chevron.open { transform: rotate(180deg); }
+
+.toolstep-body {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--a2ui-border);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.toolstep-body .toolstep-section:first-child:last-child { grid-column: 1 / -1; }
+.toolstep-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--a2ui-muted);
+  margin-bottom: 4px;
+}
+.toolstep-json {
+  margin: 0;
+  padding: 8px;
+  background: var(--a2ui-bg);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 6px;
+  color: var(--a2ui-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+@media (max-width: 720px) {
+  .toolstep-body { grid-template-columns: 1fr; }
+}
+
+/* ============================================================ *
+ *  ReasoningBlock (思考过程)
+ *  Collapsible; auto-expands while streaming the last block, then collapses.
+ * ============================================================ */
+
+.reasoning {
+  max-width: min(78%, 720px);
+  margin: 4px 0;
+  background: rgba(255,255,255,0.02);
+  border: 1px dashed var(--a2ui-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.reasoning-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: var(--a2ui-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.reasoning-header:hover { color: var(--a2ui-text); background: rgba(255,255,255,0.03); }
+.reasoning-icon { font-size: 12px; }
+.reasoning-title { font-weight: 700; letter-spacing: 0.02em; flex: 1; }
+.reasoning-live {
+  font-size: 11px;
+  color: var(--a2ui-primary);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.reasoning-live::before {
+  content: "";
+  width: 6px; height: 6px;
+  background: var(--a2ui-primary);
+  border-radius: 50%;
+  animation: toolstep-pulse-dot 1.2s ease-in-out infinite;
+}
+@keyframes toolstep-pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.7); }
+}
+.reasoning-chevron { font-size: 10px; transition: transform 0.15s; }
+.reasoning-chevron.open { transform: rotate(180deg); }
+.reasoning-body {
+  padding: 8px 12px 12px;
+  border-top: 1px dashed var(--a2ui-border);
+  color: var(--a2ui-muted);
+  font-size: 13px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* ============================================================ *
+ *  Working indicator (three bouncing dots) when busy and not currently
+ *  rendering a running tool's spinner.
+ * ============================================================ */
+
+.conversation-working {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  align-self: flex-start;
+}
+.conversation-working-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--a2ui-primary);
+  opacity: 0.4;
+  animation: conversation-working-bounce 1.2s ease-in-out infinite;
+}
+.conversation-working-dot:nth-child(2) { animation-delay: 0.15s; }
+.conversation-working-dot:nth-child(3) { animation-delay: 0.30s; }
+@keyframes conversation-working-bounce {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50%      { opacity: 1;   transform: translateY(-3px); }
+}
+
+/* ============================================================ *
+ *  History sidebar (left column, Coze-style)
+ * ============================================================ */
+
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--a2ui-sidebar);
+  border-right: 1px solid var(--a2ui-border);
+}
+.sidebar-header {
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--a2ui-border);
+}
+.sidebar-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--a2ui-panel-2);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 10px;
+  color: var(--a2ui-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.sidebar-new:hover { border-color: var(--a2ui-primary); background: rgba(0,191,255,0.08); }
+.sidebar-new-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--a2ui-primary);
+  color: #001a25;
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1;
+}
+.sidebar-search {
+  padding: 6px 10px;
+  background: var(--a2ui-panel-2);
+  border: 1px solid var(--a2ui-border);
+  border-radius: 8px;
+  color: var(--a2ui-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.sidebar-search:focus { border-color: var(--a2ui-primary); }
+
+.sidebar-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-empty {
+  color: var(--a2ui-muted);
+  font-size: 12px;
+  padding: 24px 16px;
+  text-align: center;
+}
+.sidebar-empty-title { color: var(--a2ui-text); font-weight: 600; margin-bottom: 4px; }
+.sidebar-empty-hint  { font-size: 11px; }
+
+.sidebar-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--a2ui-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.sidebar-item:hover { background: var(--a2ui-panel-2); color: var(--a2ui-text); }
+.sidebar-item.active {
+  background: rgba(0,191,255,0.12);
+  border-color: rgba(0,191,255,0.5);
+  color: var(--a2ui-text);
+}
+.sidebar-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-item-meta {
+  font-size: 11px;
+  color: var(--a2ui-muted);
+}
+.sidebar-item-rename {
+  width: 100%;
+  padding: 2px 4px;
+  background: var(--a2ui-bg);
+  border: 1px solid var(--a2ui-primary);
+  border-radius: 4px;
+  color: var(--a2ui-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+.sidebar-item-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+.sidebar-item:hover .sidebar-item-actions,
+.sidebar-item.active .sidebar-item-actions { display: inline-flex; }
+.sidebar-item-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--a2ui-muted);
+  cursor: pointer;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1;
+}
+.sidebar-item-btn:hover { color: var(--a2ui-text); border-color: var(--a2ui-border); }
+.sidebar-item-btn.danger:hover { color: var(--a2ui-error); border-color: rgba(239,68,68,0.5); }
+
+@media (max-width: 720px) {
+  .sidebar {
+    width: 200px;
+  }
+  .chat-pane {
+    border-left: 0;
+  }
+}
 

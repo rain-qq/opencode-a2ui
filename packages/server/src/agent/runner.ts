@@ -14,9 +14,14 @@
  */
 
 import type { A2UIEnvelope } from "@a2ui/protocol";
-import { AcpClient } from "../opencode/acp-client.js";
+import { AcpClient, type AcpPromptPart } from "../opencode/acp-client.js";
 import { AcpUpdateMapper } from "../opencode/acp-events.js";
 import { getOrCreateSession, setOpencodeSessionId } from "../session/store.js";
+import { fetchImageBytes, attachmentUrlToKey } from "../storage/minio.js";
+
+/** Hard cap on per-image bytes we'll base64-encode into the prompt. Anything
+ *  larger is dropped with a stderr warning — keeps JSON-RPC payloads bounded. */
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MiB
 
 export type AgentEvent =
   | { type: "session"; opencodeSessionId: string }
@@ -38,6 +43,13 @@ export interface RunAgentInput {
   opencodeSessionId?: string;
   /** Continue opencode's most recent session (resolves via session/list). */
   continueLast?: boolean;
+  /**
+   * Server-side image attachments (must already be uploaded to /api/files/*).
+   * Fed to the model as ACP `image` parts in addition to the text message;
+   * NOT embedded as markdown in `message`. Caller (http/app.ts) is responsible
+   * for rejecting anything that isn't an `/api/files/...` URL.
+   */
+  attachments?: Array<{ url: string; mimeType?: string }>;
 }
 
 export interface RunAgentOptions {
@@ -149,12 +161,42 @@ export async function* runAgent(
 
   yield { type: "step_start" };
 
+  // Build the prompt content: text part + base64-inlined image parts.
+  // ACP's ImageContent only accepts inline base64, not URLs — so we fetch each
+  // attachment from MinIO and base64-encode it here. Anything that fails to
+  // fetch or exceeds MAX_ATTACHMENT_BYTES is dropped with a warning rather
+  // than killing the turn (a missing image should still let the text get
+  // through, but we'll surface a trace so the user knows).
+  const promptParts: AcpPromptPart[] = [{ type: "text", text: message }];
+  if (input.attachments?.length) {
+    for (const a of input.attachments) {
+      const fetched = await fetchImageBytes(a.url);
+      if (!fetched) {
+        yield {
+          type: "trace",
+          message: `[attachment] failed to load ${a.url}`,
+        };
+        continue;
+      }
+      if (fetched.buf.length > MAX_ATTACHMENT_BYTES) {
+        yield {
+          type: "trace",
+          message: `[attachment] skipping ${a.url}: ${fetched.buf.length} bytes exceeds ${MAX_ATTACHMENT_BYTES} limit`,
+        };
+        continue;
+      }
+      promptParts.push({
+        type: "image",
+        data: fetched.buf.toString("base64"),
+        mimeType: fetched.contentType,
+      });
+    }
+  }
+
   const mapper = new AcpUpdateMapper();
   let stopReason: string | undefined;
   try {
-    const stream = client.sessionPrompt(acpSessionId, [
-      { type: "text", text: message },
-    ]);
+    const stream = client.sessionPrompt(acpSessionId, promptParts);
 
     for await (const update of stream) {
       for (const ev of mapper.map(update)) yield ev;

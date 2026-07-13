@@ -26,6 +26,14 @@ export interface AcpPeerHandle {
   client: AcpClient;
 }
 
+/** The currently-attached peer, or null if bootstrap failed / not started. */
+let currentPeer: AcpPeerHandle | null = null;
+
+/** Expose the live peer (used by /api/cancel to reach sessionCancel). */
+export function getAcpPeer(): AcpPeerHandle | null {
+  return currentPeer;
+}
+
 /**
  * Spawn `opencode acp` and perform the initialize handshake. Resolves null on
  * spawn error / init timeout / early exit — caller then serves without a peer
@@ -47,15 +55,17 @@ export async function startAcpPeer(): Promise<AcpPeerHandle | null> {
   }
 
   setDefaultAcpClient(client);
+  currentPeer = { client };
   process.stderr.write(
     `[acp-peer] opencode ACP peer ready (bin=${client.config.bin})\n`
   );
-  return { client };
+  return currentPeer;
 }
 
 /** Stop a previously started peer (whole process tree). */
 export function stopAcpPeer(handle: AcpPeerHandle | null): void {
   if (!handle) return;
+  if (currentPeer === handle) currentPeer = null;
   handle.client.dispose();
 }
 
