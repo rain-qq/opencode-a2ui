@@ -1,3 +1,0 @@
-{"type":"user_message","ts":1783955180145,"text":"计算 123*456，并把结果展示成卡片。"}
-{"type":"assistant_text","ts":1783955185861,"text":"123 × 456 = 56,088。\n\n"}
-{"type":"surface","ts":1783955185862,"surfaceId":"calc_1","archived":true}

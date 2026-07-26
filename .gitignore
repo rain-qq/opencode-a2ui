@@ -7,3 +7,4 @@ dist/
 .vite/
 .playwright-cli/
 .claude/
+.a2ui/
