@@ -57,6 +57,23 @@ const SCENARIOS: { name: string; events: AgentEvent[] }[] = [
       { type: "text", text: 'partial:\n```a2ui\n{"version":"v0.9.1","createSurface":{"surfaceId":"open"}}\n' },
     ],
   },
+  // StepList children wrapped as single-element array — must be normalized to
+  // bare {path, componentId} by the server adapter (LLM occasionally writes
+  // it this way). Surface/structure unchanged otherwise.
+  {
+    name: "StepList children [{path,componentId}] -> {path,componentId}",
+    events: [
+      {
+        type: "text",
+        text:
+          '```a2ui\n' +
+          '{"version":"v0.9.1","updateComponents":{"surfaceId":"step_strip","components":[' +
+          '{"id":"strip","component":"StepList","children":[{"path":"/steps","componentId":"step-item"}]}' +
+          ']}}\n' +
+          '```\n',
+      },
+    ],
+  },
 ];
 
 async function* fromArray<T>(arr: T[]): AsyncIterable<T> {
@@ -83,6 +100,21 @@ async function* fromArray<T>(arr: T[]): AsyncIterable<T> {
           )
           .join(", ");
         console.log("  a2ui: " + ev.envelopes.length + " envelopes (" + ids + ")");
+        // For the StepList normalization case, dump the resolved children shape
+        // so the test log shows the unwrap actually happened.
+        for (const e of ev.envelopes as any[]) {
+          const comps = e.updateComponents?.components ?? [];
+          for (const c of comps) {
+            if (c.component === "StepList") {
+              const childDesc = Array.isArray(c.children)
+                ? "array[" + c.children.length + "]"
+                : c.children
+                ? "bare{" + Object.keys(c.children).join(",") + "}"
+                : "none";
+              console.log("    StepList.children = " + childDesc);
+            }
+          }
+        }
       } else {
         console.log("  " + ev.type);
       }

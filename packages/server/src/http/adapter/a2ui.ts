@@ -111,13 +111,40 @@ class JsonObjectStream {
   }
 }
 
+/**
+ * 容错: 把 `[{path, componentId}]` 这种错误形式 unwrap 成 `{path, componentId}`。
+ * 协议 [protocol/src/types.ts] 定义的 ChildList 形态只有两种:
+ *   - 静态 id 数组
+ *   - 裸模板对象 { path, componentId }
+ * LLM 偶尔会生成第三种(单元素数组包模板对象),这里统一矫正。
+ */
+function unwrapChildListArray(children: unknown): unknown {
+  if (
+    Array.isArray(children) &&
+    children.length === 1 &&
+    !Array.isArray(children[0]) &&
+    children[0] !== null &&
+    typeof children[0] === "object" &&
+    typeof (children[0] as { path?: unknown }).path === "string" &&
+    typeof (children[0] as { componentId?: unknown }).componentId === "string"
+  ) {
+    return children[0];
+  }
+  return children;
+}
+
 function normalizeEnvelope(env: A2UIEnvelope): A2UIEnvelope | undefined {
   const e: Record<string, unknown> = { ...env };
   if (typeof e.version !== "string") e.version = A2UI_VERSION;
   const uc = e.updateComponents as Record<string, unknown> | undefined;
   if (uc) {
     const list = unwrapArray(uc.components) ?? [];
-    e.updateComponents = { ...uc, components: list };
+    const normalizedList = (list as unknown[]).map((comp) => {
+      if (!isPlainObject(comp)) return comp;
+      const c = comp as Record<string, unknown>;
+      return { ...c, children: unwrapChildListArray(c.children) };
+    });
+    e.updateComponents = { ...uc, components: normalizedList };
   }
   return e as unknown as A2UIEnvelope;
 }

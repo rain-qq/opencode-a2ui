@@ -7,9 +7,11 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DynamicValue, FunctionCall, ActionSpec } from "@a2ui/protocol";
-import { isFunctionCall, BUILTIN_FUNCTIONS } from "@a2ui/protocol";
+import { isFunctionCall, isTemplateChildren, BUILTIN_FUNCTIONS } from "@a2ui/protocol";
+import type { ChildList } from "@a2ui/protocol";
 import type { NodeProps, NodeRenderer } from "../renderer.js";
 import { bindInput, bindValue, ensureBoolean, ensureNumber, ensureString, writeBack } from "../bind.js";
+import type { BindContext } from "../bind.js";
 import { firstFailure } from "../checks.js";
 import { sendAction } from "../transport.js";
 import { MarkdownView } from "../Markdown.js";
@@ -283,11 +285,33 @@ const Slider: NodeRenderer = ({ node, ctx }) => {
  * action with `{ event: { name, context: { stepId } } }` so the agent can
  * react to manual step selection.
  */
+/**
+ * 容错: agent 偶尔会把 ChildList 模板写成单元素数组
+ *   [{ path: "/data/path", componentId: "template-id" }]
+ * 协议要求的形态是裸对象。unwrap 后再用协议层的 isTemplateChildren 判定。
+ */
+const unwrapChildListTemplate = (children: ChildList | undefined): ChildList | undefined => {
+  if (
+    Array.isArray(children) &&
+    children.length === 1 &&
+    !Array.isArray(children[0]) &&
+    children[0] !== null &&
+    typeof children[0] === "object" &&
+    typeof (children[0] as { path?: unknown }).path === "string" &&
+    typeof (children[0] as { componentId?: unknown }).componentId === "string"
+  ) {
+    return children[0] as { path: string; componentId: string };
+  }
+  return children;
+};
+
 const StepList: NodeRenderer = ({ node, ctx, renderChildren }) => {
   const emptyHint = ensureString(bindValue(node.emptyHint as DynamicValue<string>, ctx));
-  const hasChildren = Array.isArray(node.children)
-    ? node.children.length > 0
-    : !!node.children;
+  // 容错: agent 有时把 ChildList 模板包成 [{ path, componentId }] 单元素数组
+  const normalizedChildren = unwrapChildListTemplate(node.children);
+  const hasChildren = Array.isArray(normalizedChildren)
+    ? normalizedChildren.length > 0
+    : isTemplateChildren(normalizedChildren);
 
   if (!hasChildren) {
     return (
@@ -299,7 +323,7 @@ const StepList: NodeRenderer = ({ node, ctx, renderChildren }) => {
     <div className="a2-steplist-wrap">
       <div className="a2-steplist">
         <div className="a2-steplist-track" aria-hidden />
-        {renderChildren(node.children, ctx)}
+        {renderChildren(normalizedChildren, ctx)}
         {/* 每个 StepItem 通过自身 node.action 处理点击；StepList 不再持有 action。 */}
       </div>
     </div>
@@ -309,31 +333,63 @@ const StepList: NodeRenderer = ({ node, ctx, renderChildren }) => {
 /**
  * StepItem — one row inside StepList. Defined as a standalone node that the
  * template references by id. Renders num / title / progress / status pill,
- * plus an independent `selected` highlight (clicking a step toggles selected,
- * which is separate from status: completed/active/pending).
+ * plus an independent `selected` highlight. Clicking a row toggles the
+ * `selected` flag locally (pure frontend interaction, no action/event).
+ *
+ * Path resolution fallback: LLM-generated templates sometimes write absolute
+ * paths like `{path:"/steps/title"}` while the runtime expects a scope-relative
+ * path `{path:"title"}`. We try absolute first, then fall back to the same
+ * field name resolved against `scopePath`. The fallback is silent so the
+ * canonical form keeps working unchanged.
  */
+function bindStepItemField(
+  v: DynamicValue<unknown> | undefined,
+  ctx: BindContext,
+  fallbackLeaf: string
+): unknown {
+  const direct = bindValue(v as DynamicValue<unknown>, ctx);
+  if (direct !== undefined && direct !== null && direct !== "") return direct;
+  // Try the same field by leaf name against the current scope item.
+  if (ctx.scopePath) {
+    const relRef = { path: fallbackLeaf };
+    const viaScope = bindValue(relRef as DynamicValue<unknown>, ctx);
+    if (viaScope !== undefined && viaScope !== null && viaScope !== "") return viaScope;
+  }
+  return direct;
+}
+
 const StepItem: NodeRenderer = ({ node, ctx }) => {
-  const num = ensureString(bindValue(node.num as DynamicValue<string>, ctx));
-  const title = ensureString(bindValue(node.title as DynamicValue<string>, ctx));
-  const status = ensureString(bindValue(node.status as DynamicValue<string>, ctx));
-  const progress = ensureString(bindValue(node.progress as DynamicValue<string>, ctx));
-  const selected = ensureBoolean(bindValue(node.selected as DynamicValue<boolean>, ctx));
-  const action = node.action as ActionSpec | undefined;
+  const num = ensureString(bindStepItemField(node.num as DynamicValue<string>, ctx, "num"));
+  const title = ensureString(bindStepItemField(node.title as DynamicValue<string>, ctx, "title"));
+  const status = ensureString(bindStepItemField(node.status as DynamicValue<string>, ctx, "status"));
+  const progress = ensureString(bindStepItemField(node.progress as DynamicValue<string>, ctx, "progress"));
+  const selected = ensureBoolean(bindStepItemField(node.selected as DynamicValue<boolean>, ctx, "selected"));
 
   const statusKey: "completed" | "active" | "pending" =
     status === "completed" || status === "active" ? status : "pending";
 
+  // Pure-frontend toggle: clicking a row flips its `selected` flag in the
+  // surface data model. No action/event is dispatched to the agent. The
+  // pointer is computed once: scopePath is e.g. "/steps/0", so the field
+  // pointer is "/steps/0/selected". When clicked again, the value is inverted
+  // locally without any server round-trip.
+  const toggleSelected = () => {
+    if (!ctx.scopePath) return;
+    const pointer = ctx.scopePath + "/selected";
+    writeBack(ctx.surface.surfaceId, pointer, !selected);
+  };
+
   return (
     <div
       className={`a2-stepitem status-${statusKey} ${selected ? "selected" : ""}`}
-      onClick={() => performAction(action, ctx.surface.surfaceId, node.id, ctx)}
+      onClick={toggleSelected}
       role="button"
       tabIndex={0}
       aria-pressed={selected || undefined}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          performAction(action, ctx.surface.surfaceId, node.id, ctx);
+          toggleSelected();
         }
       }}
     >
@@ -385,24 +441,53 @@ const StepProgress: NodeRenderer = ({ node, ctx }) => {
 };
 
 /**
+ * Unwrap a `{ rows/headers/items/values: [...] }` wrapper into the inner array.
+ * LLM tool-schemas occasionally emit this form when a2ui expects a bare
+ * array. If the input is already an array, return it as-is.
+ */
+function unwrapArrayField<T = unknown>(v: unknown): T[] | undefined {
+  if (Array.isArray(v)) return v as T[];
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    for (const key of ["rows", "headers", "items", "values", "columns"]) {
+      if (Array.isArray(o[key])) return o[key] as T[];
+    }
+  }
+  return undefined;
+}
+
+/**
  * DataTable — column headers + rows of strings. Suitable for the
  * "middle product" artifact panel of an execution step.
  */
 const DataTable: NodeRenderer = ({ node, ctx }) => {
   const emptyHint = ensureString(bindValue(node.emptyHint as DynamicValue<string>, ctx));
+  const columnsBinding =
+    (bindValue(node.columns as DynamicValue<string[]>, ctx) as unknown) ?? [];
   const columns =
-    (bindValue(node.columns as DynamicValue<string[]>, ctx) as string[] | undefined) ?? [];
-  const rawRows =
-    (bindValue(node.rows as DynamicValue<string[]>, ctx) as unknown) ?? [];
+    unwrapArrayField<string>(columnsBinding)?.map((c) => ensureString(c)) ?? [];
+
+  const rawRows = (bindValue(node.rows as DynamicValue<string[]>, ctx) as unknown) ?? [];
+  const unwrappedRows = unwrapArrayField<unknown>(rawRows);
   // Allow either string[][] (correct shape) or flat string[]; coerce gracefully.
-  const rows: string[][] = Array.isArray(rawRows)
-    ? (rawRows as unknown[]).map((r) =>
-        Array.isArray(r) ? (r as string[]).map((c) => ensureString(c)) : [ensureString(r)]
+  const rows: string[][] = Array.isArray(unwrappedRows)
+    ? unwrappedRows.map((r) =>
+        Array.isArray(r) ? (r as unknown[]).map((c) => ensureString(c)) : [ensureString(r)]
       )
     : [];
 
   if (columns.length === 0 && rows.length === 0) {
-    return <div className="a2-datatable-empty">{emptyHint || "No data."}</div>;
+    // Differentiate "data source missing" (binding returned empty) from
+    // "data source empty" (binding resolved to an empty array). Helps the
+    // agent understand whether it forgot to send updateDataModel or simply
+    // had no rows to show.
+    const sourceConfigured =
+      node.rows !== undefined ||
+      node.columns !== undefined;
+    const hint =
+      emptyHint ||
+      (sourceConfigured ? "暂无数据" : "未配置数据源(rows / columns 未绑定)");
+    return <div className="a2-datatable-empty">{hint}</div>;
   }
 
   return (
