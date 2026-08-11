@@ -1,80 +1,41 @@
 /**
- * A2UI instruction injected into the agent's first message of a session when
- * the A2UI adapter is active. We don't constrain the model to ONLY emit A2UI
- * envelopes — plain text is the default. The model emits A2UI only when it
- * decides a structured UI is warranted, by wrapping JSONL envelopes in
- * `<a2ui>...</a2ui>` code fences inside the answer.
+ * 注入给 agent 的 A2UI 指令,只在一个 session 的第一条消息里下发。
+ *
+ * 这段 prompt 很短,是**有意的**: 渲染 UI 的契约已经由 opencode 插件
+ * [.opencode/plugin/a2ui-render.js] 注册的工具 schema 承载 —— 工具名、参数、
+ * 每个字段的用途都在 zod schema 的 describe 里,模型直接看得到,写错了 zod 会拦。
+ *
+ * 所以这里**不教格式**,只讲判断: 什么时候该渲染 UI,什么时候纯文本就够。
+ * 工具清单从 TEMPLATES 自动生成,加模板不用改这个文件。
  */
 
-import {
-  A2UI_VERSION,
-  BASIC_CATALOG,
-  BASIC_CATALOG_ID,
-} from "@a2ui/protocol";
+import { TEMPLATES } from "@a2ui/protocol";
 
-function describeCatalog(): string {
-  return BASIC_CATALOG.map(
-    (c) =>
-      `- ${c.name} [${c.kind}] — ${c.description}${
-        c.props ? "  Props: " + c.props : ""
-      }`
-  ).join("\n");
+/** 一行一个工具: 名字 + 用途。参数细节在工具 schema 里,不在这儿重复。 */
+function listTools(): string {
+  return Object.values(TEMPLATES)
+    .map((t) => `- ${t.toolName} — ${t.description}`)
+    .join("\n");
 }
 
-export const A2UI_INSTRUCTIONS = String.raw`You are running inside an A2UI-capable client. A2UI is an OPTIONAL channel — plain text is the default for everything. Use A2UI only when the user clearly benefits from structured UI (a form, a picker, a clickable card, etc.).
+export const A2UI_INSTRUCTIONS = String.raw`你运行在一个支持结构化 UI 的客户端里。除了普通文字回复,你还能调用下面的工具在用户界面上渲染真正可交互的组件:
 
-OUTPUT DISCIPLINE (CRITICAL):
-- Output ONLY the final user-facing answer. Do NOT include any chain-of-thought, reasoning, thinking, planning, or self-talk. No thinking blocks, no angle-bracket thinking tags, no "Let me..." preamble. The user must never see your scratchwork.
-- If you catch yourself drafting JSONL or planning a UI mentally, that stays in your head — the user only sees your final prose + any a2ui fence.
-- Never include the same envelope JSON twice (not in prose, not in a code block labelled anything other than a2ui).
+${listTools()}
 
-WHEN TO USE PLAIN TEXT (default):
-- Casual chat, explanations, code snippets, prose. Just answer in plain text. Nothing to wrap.
+## 什么时候用
 
-WHEN TO USE A2UI:
-- A form the user must fill in (regex/email validation, etc.).
-- A list of items the user should click/inspect.
-- A confirmation card with action buttons.
-- Anywhere a button or input would be clearer than prose.
+- 需要用户**填**信息 → render_form(比让用户在聊天里逐条回答好得多)
+- 需要用户**选**一项 → render_list(带 clickEvent)
+- 需要用户**放行**某个操作 → render_confirm(危险操作前必须先确认,不要直接执行)
+- 一条结论/状态值得**突出**展示 → render_card
 
-HOW TO EMIT A2UI:
-- Output the JSONL envelopes verbatim (one JSON object per line) inside a fenced block labelled exactly ` + "`a2ui`" + `:
+## 什么时候不用
 
-` + "```a2ui" + `
-{"version":"${A2UI_VERSION}","createSurface":{"surfaceId":"form_1","catalogId":"${BASIC_CATALOG_ID}","sendDataModel":true}}
-{"version":"${A2UI_VERSION}","updateComponents":{"surfaceId":"form_1","components":[
-  {"id":"root","component":"Card","child":"col"},
-  {"id":"col","component":"Column","children":["title","email","submit"]},
-  {"id":"title","component":"Text","text":"Contact us","variant":"heading"},
-  {"id":"email","component":"TextField","label":"Email","value":{"path":"/contact/email"},
-    "checks":[{"call":"email","args":{"value":{"path":"/contact/email"}},"message":"Please enter a valid email."}]},
-  {"id":"submit","component":"Button","child":"submit_label","variant":"primary",
-    "checks":[{"call":"email","args":{"value":{"path":"/contact/email"}},"message":"Invalid email"}],
-    "action":{"event":{"name":"submitContact","context":{"email":{"path":"/contact/email"}}}}},
-  {"id":"submit_label","component":"Text","text":"Send"}
-]}}
-{"version":"${A2UI_VERSION}","updateDataModel":{"surfaceId":"form_1","path":"/contact","value":{"email":""}}}
-` + "```" + `
+闲聊、解释、写代码、给建议 —— 纯文本就好。不要为了用工具而用工具:把一段本来该好好说的话塞进卡片里,反而更难读。
 
-- Critical: once an envelope is inside a ` + "`a2ui`" + ` fence, do NOT repeat it outside in prose. The fence content is consumed as structured UI; the chat bubble only renders whatever you write BETWEEN fences. No "here's the JSON:" preamble, no echoing the same JSON in any other form.
-- Outside the fence: pure text — explanation, preamble, or follow-up prose. Anything outside the ` + "`a2ui`" + ` fences is rendered as plain text.
+## 注意
 
-RULES:
-- catalogId is always "${BASIC_CATALOG_ID}".
-- Exactly one component has id "root". snake_case ids, unique per surface.
-- Arrays are plain JSON arrays. Never wrap them as {"item":[...]}.
-- Checks use "call" (not "fn").
-- Actions are wrapped as either {"event":{"name":"...", "context":{...}}} or {"functionCall":{"call":"...", "args":{...}}}.
-- A button's label comes from its ` + "`child`" + ` (pointing at a Text component), not from a ` + "`text`" + ` prop.
-- Reuse the same surfaceId across updates to the same surface.
-- You may intersperse text and ` + "`a2ui`" + ` blocks freely. Multiple ` + "`a2ui`" + ` blocks per turn are fine.
-
-COMPONENT CATALOG:
-${describeCatalog()}
-
-FORMATTING PROBES (just talk naturally otherwise):
-- "How are you?" → plain text only, no fences.
-- "What can you do?" → plain text only.
-- "Make me a contact form" → brief plain-text intro, then a single ` + "`a2ui`" + ` fence with the form envelopes.
-- "Recommend 3 books" → plain text is fine; if you do build a card list, put it in a ` + "`a2ui`" + ` fence.
+- 渲染之后不要再用文字把卡片内容复述一遍 —— 用户已经看到卡片了,重复只会让界面显得啰嗦。可以在卡片前后写一句引导或补充。
+- 卡片上的按钮被点击后,你会收到对应的事件(就是你在 event / clickEvent / submitEvent 里起的名字)以及相关数据,那时再继续处理。
+- 一轮里可以渲染多个卡片,也可以一边说话一边渲染。
 `;

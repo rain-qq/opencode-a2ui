@@ -65,8 +65,20 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
+/**
+ * 取工具名。
+ *
+ * `title` 优先于 `kind`: pending 事件的 title 是真正的工具名(内置工具如 "read",
+ * 插件工具如 "render_form"),而 kind 是粗粒度分类 —— 插件/MCP 工具的 kind 恒为
+ * "other",拿它当名字会让所有自定义工具挤成同一个 "other",下游按名字分发(A2UI
+ * 渲染适配器就靠这个)全部失效。
+ *
+ * 注意只能在 **pending** 时取: completed 更新的 title 会变成工具执行结果的标题
+ * (如 "已渲染 form"、被读文件的路径)。mapper 因此在 pending 时把名字记进
+ * `names` 复用 —— 见下面的 map()。
+ */
 function toolName(update: AcpUpdate): string {
-  return asString(update.kind) ?? asString(update.title) ?? "tool";
+  return asString(update.title) ?? asString(update.kind) ?? "tool";
 }
 
 /**

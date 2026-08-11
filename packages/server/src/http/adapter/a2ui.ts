@@ -1,305 +1,117 @@
 /**
- * A2UI adapter. Sits on top of the agent runtime and scans streamed `text`
- * events for fenced `` ` `a2ui` `` ... `` ` `` blocks containing JSONL
- * envelopes. Outside the fences is plain text; inside is split into envelopes
- * and yielded as a single batched `a2ui` event.
+ * A2UI 渲染适配器。在 agent 事件流里认出 UI 渲染工具的调用,把它的**结构化参数**
+ * 展开成标准 A2UI envelope。
  *
- * This is the ON-DEMAND lane: plain `text` events are still the default and
- * always pass through. `a2ui` events only appear when the model decided to emit
- * structured UI.
+ * 上游是 opencode 插件 [.opencode/plugin/a2ui-render.js] 注册的工具
+ * (render_card / render_list / render_form / render_confirm)。模型调用它们时,
+ * 参数经 zod 校验后以 `tool_call.args` 到达 —— 是**对象**,不是文本。所以这一层
+ * 不需要任何文本解析: 没有围栏扫描、没有增量 JSON、没有跨 chunk 缓冲。
  *
- * Stateful because the fence can span multiple `text` chunks. We buffer until
- * we see the close fence, then emit. The parser is tolerant of malformed JSON
- * (drops bad lines, doesn't poison subsequent ones) and falls back gracefully
- * if the open fence never closes (everything stays text).
+ * 做三件事:
+ *   1. 认出渲染工具的 tool_call → 展开成 `a2ui` 事件推给客户端
+ *   2. **吞掉**这些工具的 tool_call / tool_result —— 用户看到的是渲染出来的卡片,
+ *      不该再看到一条 "render_card" 工具调用记录。其他工具(read/bash/...)照常透传。
+ *   3. 其余事件原样透传
+ *
+ * 下游(image-capture / transcript / SSE / 前端 store)完全不感知工具的存在 ——
+ * 它们看到的仍是标准协议消息。
  */
 
-import { A2UI_VERSION } from "@a2ui/protocol";
-import type { A2UIEnvelope } from "@a2ui/protocol";
+import { expandTemplate, TOOL_TO_TEMPLATE } from "@a2ui/protocol";
 import type { AgentEvent } from "../../agent/runner.js";
 
-const FENCE = "a2ui";
-/** Always called via local helpers so the regexes don't share lastIndex across
- *  invocations. */
-function openRe(): RegExp {
-  return new RegExp("```" + FENCE + "\\s*\\n", "g");
-}
 /**
- * A close fence is the next ``` after the open one. We don't require a
- * trailing newline — model output sometimes ends the fence with ``` followed
- * directly by prose on the same (unusual) line, and we still want to close
- * cleanly.
- */
-function closeRe(): RegExp {
-  return /```/g;
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** Accept `{items:[...]}` wrappers some LLM tool-schemas emit. */
-function unwrapArray<T = unknown>(value: unknown): T[] | undefined {
-  if (Array.isArray(value)) return value as T[];
-  if (isPlainObject(value)) {
-    for (const key of ["item", "items", "values", "list"]) {
-      if (Array.isArray(value[key])) return value[key] as T[];
-    }
-  }
-  return undefined;
-}
-
-/**
- * Brace-balanced incremental JSON extractor. Buffers characters, emits complete
- * top-level JSON objects as soon as depth returns to 0. Robust to braces
- * inside string literals, escape sequences, and a leading fence.
- */
-class JsonObjectStream {
-  private queue = "";
-  private current = "";
-  private depth = 0;
-  private inString = false;
-  private escape = false;
-
-  push(chunk: string): unknown[] {
-    const out: unknown[] = [];
-    this.queue += chunk;
-    while (this.queue.length > 0) {
-      const c = this.queue[0];
-      this.queue = this.queue.slice(1);
-      if (this.depth === 0 && this.current.length === 0) {
-        if (c !== "{" && c !== " " && c !== "\n" && c !== "\t" && c !== "\r")
-          continue;
-        if (c !== "{") continue;
-      }
-      this.current += c;
-      if (this.inString) {
-        if (this.escape) this.escape = false;
-        else if (c === "\\") this.escape = true;
-        else if (c === '"') this.inString = false;
-        continue;
-      }
-      if (c === '"') this.inString = true;
-      else if (c === "{") this.depth++;
-      else if (c === "}") {
-        this.depth--;
-        if (this.depth === 0) {
-          const slice = this.current.trim();
-          this.current = "";
-          this.inString = false;
-          this.escape = false;
-          try {
-            out.push(JSON.parse(slice));
-          } catch {
-            /* drop malformed line */
-          }
-        }
-      }
-    }
-    return out;
-  }
-
-  flush(): unknown[] {
-    const trailing = this.current.trim();
-    if (!trailing || this.depth !== 0 || this.inString) return [];
-    this.current = "";
-    try {
-      return [JSON.parse(trailing)];
-    } catch {
-      return [];
-    }
-  }
-}
-
-/**
- * 容错: 把 `[{path, componentId}]` 这种错误形式 unwrap 成 `{path, componentId}`。
- * 协议 [protocol/src/types.ts] 定义的 ChildList 形态只有两种:
- *   - 静态 id 数组
- *   - 裸模板对象 { path, componentId }
- * LLM 偶尔会生成第三种(单元素数组包模板对象),这里统一矫正。
- */
-function unwrapChildListArray(children: unknown): unknown {
-  if (
-    Array.isArray(children) &&
-    children.length === 1 &&
-    !Array.isArray(children[0]) &&
-    children[0] !== null &&
-    typeof children[0] === "object" &&
-    typeof (children[0] as { path?: unknown }).path === "string" &&
-    typeof (children[0] as { componentId?: unknown }).componentId === "string"
-  ) {
-    return children[0];
-  }
-  return children;
-}
-
-function normalizeEnvelope(env: A2UIEnvelope): A2UIEnvelope | undefined {
-  const e: Record<string, unknown> = { ...env };
-  if (typeof e.version !== "string") e.version = A2UI_VERSION;
-  const uc = e.updateComponents as Record<string, unknown> | undefined;
-  if (uc) {
-    const list = unwrapArray(uc.components) ?? [];
-    const normalizedList = (list as unknown[]).map((comp) => {
-      if (!isPlainObject(comp)) return comp;
-      const c = comp as Record<string, unknown>;
-      return { ...c, children: unwrapChildListArray(c.children) };
-    });
-    e.updateComponents = { ...uc, components: normalizedList };
-  }
-  return e as unknown as A2UIEnvelope;
-}
-
-function parseEnvelopeJsonl(text: string): A2UIEnvelope[] {
-  const parser = new JsonObjectStream();
-  const out: A2UIEnvelope[] = [];
-  const all = [...parser.push(text), ...parser.flush()];
-  for (const obj of all) {
-    if (!isPlainObject(obj)) continue;
-    const n = normalizeEnvelope(obj as unknown as A2UIEnvelope);
-    if (
-      n &&
-      (n.createSurface ||
-        n.updateComponents ||
-        n.updateDataModel ||
-        n.deleteSurface)
-    ) {
-      out.push(n);
-    }
-  }
-  return out;
-}
-
-/**
- * For each open fence, scan for the matching close. We do a single linear
- * scan over the buffered text and return slices for each fence in order, plus
- * the trailing text after the last fence (or after the only-partial last
- * fence, in which case the partial slice is left in the buffer for the next
- * chunk).
+ * surfaceId 生成器。
  *
- * Returns:
- *   - emittedBefore: text before the first fence → render as plain text now
- *   - blocks:        complete envelope blocks (ready to parse)
- *   - residual:      text after the last complete fence, kept in buffer
+ * withA2UIAdapter 每个请求一个实例,所以光用自增序号会跨轮次撞车 —— 第二轮的
+ * "tpl_card_1" 会复用第一轮的 surface,把历史里那张卡改掉。带上实例 nonce 避免。
+ *
+ * nonce 不能只用 Date.now(): 同一毫秒内起的两个请求会拿到同一串。加一个进程内
+ * 单调计数器保证唯一。
  */
-interface FenceScan {
-  emittedBefore: string;
-  blocks: string[];
-  residual: string;
+let adapterInstanceCounter = 0;
+
+function makeSurfaceIdGen(): (template: string) => string {
+  const nonce =
+    Date.now().toString(36) + "_" + (++adapterInstanceCounter).toString(36);
+  let seq = 0;
+  return (template) => `tpl_${template}_${nonce}_${++seq}`;
 }
 
 /**
- * Match a possibly-incomplete open-fence prefix at the end of `text`
- * (e.g. "```", "```a2", "```a2ui"). Stream chunks often split the opener
- * "```a2ui\n" across two events; we hold the partial prefix back instead of
- * emitting it as text, or the following chunk loses its fence context and
- * the whole envelope leaks out as a (wrongly typed) text event.
+ * 从工具参数里取出模型显式指定的 surfaceId(如果有)。
+ *
+ * 给同一个 surfaceId 再渲染一次即为「更新那张卡」: store 的 createSurface 对已存在
+ * 的 id 幂等,updateComponents 按 id 覆盖,updateDataModel 以 path "/" 整根替换。
+ *
+ * 注意 surfaceId 不在模板的 zod schema 里 —— 它是渲染管线的实现细节,不该出现在
+ * 模型的参数契约中。这里读它只是为将来「显式更新」留的口子。
  */
-function matchTrailingOpenPrefix(text: string): string {
-  const m = text.match(/```[a-zA-Z0-9_-]*$/);
-  return m ? m[0] : "";
+function pickSurfaceId(args: unknown): string | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return undefined;
+  const v = (args as Record<string, unknown>).surfaceId;
+  return typeof v === "string" && v ? v : undefined;
 }
 
-function extractFences(buffer: string): FenceScan {
-  const result: FenceScan = { emittedBefore: "", blocks: [], residual: "" };
-  const OPEN_RE = openRe();
-  const CLOSE_RE = closeRe();
-  let consumed = 0;
-  let foundAny = false;
-  while (consumed < buffer.length) {
-    OPEN_RE.lastIndex = consumed;
-    const open = OPEN_RE.exec(buffer);
-    if (!open) break;
-    foundAny = true;
-    const textBefore = buffer.slice(consumed, open.index);
-    let insideStart = open.index + open[0].length;
-    // Find the next "```" that isn't itself the start of another ```a2ui
-    // fence. The OPEN pattern has trailing "a2ui\n" — anything starting with
-    // "```a2ui" right after is the next pair's opener, so skip it.
-    while (true) {
-      CLOSE_RE.lastIndex = insideStart;
-      const close = CLOSE_RE.exec(buffer);
-      if (!close) {
-        result.emittedBefore += textBefore;
-        result.residual = buffer.slice(open.index);
-        return result;
-      }
-      const tail = buffer.slice(close.index, close.index + 7);
-      if (tail.startsWith("```" + FENCE + "\n") || tail.startsWith("```" + FENCE + "\r")) {
-        // That's the next pair's opener; keep scanning.
-        insideStart = close.index + 3;
-        continue;
-      }
-      result.emittedBefore += textBefore;
-      result.blocks.push(buffer.slice(insideStart, close.index));
-      consumed = close.index + 3;
-      break;
-    }
-  }
-  if (!foundAny) {
-    // No complete open fence anywhere. But the tail of the buffer may be a
-    // split opener ("```a2"...) whose "ui\n..." arrives in the next chunk.
-    // Hold it back instead of emitting it as text - otherwise the following
-    // chunk has no fence context and the envelope leaks out as plain text.
-    const held = matchTrailingOpenPrefix(buffer);
-    result.emittedBefore = held
-      ? buffer.slice(0, buffer.length - held.length)
-      : buffer;
-    result.residual = held;
-    return result;
-  }
-  // Outer loop exited because no further open fence exists. Anything left
-  // between `consumed` and end of buffer is plain text — flush. Same
-  // split-opener guard applies to this trailing text.
-  const tailText = buffer.slice(consumed);
-  const heldTail = matchTrailingOpenPrefix(tailText);
-  if (heldTail) {
-    result.emittedBefore += tailText.slice(0, tailText.length - heldTail.length);
-    result.residual = heldTail;
-  } else {
-    result.emittedBefore += tailText;
-  }
-  return result;
+/** 参数是否真的带了内容(不是 undefined,也不是空对象)。 */
+function hasArgs(args: unknown): boolean {
+  return (
+    !!args &&
+    typeof args === "object" &&
+    !Array.isArray(args) &&
+    Object.keys(args as Record<string, unknown>).length > 0
+  );
 }
 
 export async function* withA2UIAdapter(
   events: AsyncIterable<AgentEvent>
 ): AsyncIterable<AgentEvent> {
-  let buffer = "";
-  let inFence = false;
+  const nextSurfaceId = makeSurfaceIdGen();
+  /** 已被识别为渲染调用的 toolCallId —— 它们的 tool_result 也要吞掉。 */
+  const swallowed = new Set<string>();
 
   for await (const ev of events) {
-    if (ev.type !== "text") {
-      // Flush any pending plain-text residual before a non-text event so the
-      // client keeps the original order (text → tool_call → text, etc.).
-      if (buffer && !inFence) {
-        yield { type: "text", text: buffer };
-        buffer = "";
+    if (ev.type === "tool_call") {
+      const template = TOOL_TO_TEMPLATE[ev.name];
+      if (!template) {
+        yield ev;
+        continue;
       }
-      yield ev;
+
+      // 认出渲染工具 —— 吞掉这次调用本身,换成 a2ui 事件。
+      swallowed.add(ev.id);
+
+      // 参数为空说明这次调用没成功: zod 校验失败时,上游 mapper 发的是一条不带
+      // args 的 late tool_call(见 acp-events.ts 的 completed/error 分支)。这种
+      // 情况不能拿残缺参数硬渲染 —— 会给用户一张空卡。等 tool_result 里的错误
+      // 信息到了再留 trace。
+      if (!hasArgs(ev.args)) continue;
+
+      const surfaceId = pickSurfaceId(ev.args) ?? nextSurfaceId(template);
+      const envelopes = expandTemplate(template, ev.args, surfaceId);
+      if (envelopes.length > 0) {
+        yield { type: "a2ui", envelopes };
+      } else {
+        // 参数齐全但展开不出东西(builder 兜底后仍为空)。不发 a2ui,但也不能让
+        // 用户什么都看不到 —— 留一条 trace 说明发生了什么。
+        yield {
+          type: "trace",
+          message: `[a2ui] ${ev.name} 未能渲染出内容`,
+        };
+      }
       continue;
     }
 
-    buffer += ev.text;
-    const scan = extractFences(buffer);
-
-    if (scan.emittedBefore.length > 0) {
-      yield { type: "text", text: scan.emittedBefore };
-    }
-    for (const block of scan.blocks) {
-      const envelopes = parseEnvelopeJsonl(block);
-      if (envelopes.length > 0) {
-        yield { type: "a2ui", envelopes };
+    if (ev.type === "tool_result" && swallowed.has(ev.id)) {
+      // 渲染工具的结果是给模型看的确认文案,对用户无意义 —— 吞掉。
+      // 但工具真的报错了要让用户知道,否则 UI 没出来又毫无线索。
+      if (ev.error) {
+        yield { type: "trace", message: `[a2ui] 渲染失败: ${ev.error}` };
       }
+      swallowed.delete(ev.id);
+      continue;
     }
 
-    buffer = scan.residual;
-    // Track whether the residual is (part of) an a2ui fence so non-text
-    // events between chunks know to hold their flush. Covers both a complete
-    // unclosed opener ("```a2ui\n...") and a split opener prefix ("```a2").
-    inFence = buffer.startsWith("```");
+    yield ev;
   }
-
-  // Stream closed. If a fence was never closed, the residual is plain text —
-  // never drop user-visible output on the floor.
-  if (buffer) yield { type: "text", text: buffer };
 }

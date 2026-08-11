@@ -44,8 +44,14 @@ export const ENV = {
   OPENCODE_BIN: process.env.OPENCODE_BIN ?? "opencode",
   /** Working directory passed to `opencode acp` via --cwd (and to session/new). */
   OPENCODE_WORKDIR: process.env.OPENCODE_WORKDIR ?? workspaceRoot,
-  /** Run without external plugins (opencode --pure). Predictable baseline. */
-  OPENCODE_PURE: bool("OPENCODE_PURE", true),
+  /**
+   * Run without external plugins (opencode --pure).
+   *
+   * MUST stay false: `--pure` skips `.opencode/plugin/`, which is where the
+   * A2UI render tools live (a2ui-render.js). With it on, the model has no way
+   * to render UI at all — it silently degrades to text-only.
+   */
+  OPENCODE_PURE: bool("OPENCODE_PURE", false),
   /** Forward opencode logs to stderr (opencode --print-logs). Debug only. */
   OPENCODE_PRINT_LOGS: bool("OPENCODE_PRINT_LOGS", true),
   /**
