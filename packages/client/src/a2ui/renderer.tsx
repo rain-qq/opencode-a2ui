@@ -75,10 +75,16 @@ export function renderChildList(
     const arr = getRaw(ctx.surface.dataModel, absRoot);
     if (!Array.isArray(arr)) return [];
 
-    return arr.map((_item, i) => {
+    return arr.map((item, i) => {
       const scopePath = joinPointer(absRoot, i);
-      // unique key per row+template
-      const key = `${componentId}:${i}`;
+      // Key by the row's own `id` when present, so components keyed to a row
+      // keep their local state (e.g. StepItem's `selected`) when the agent
+      // inserts or removes rows mid-array. Falls back to the index.
+      const rowId =
+        item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"
+          ? ((item as Record<string, unknown>).id as string)
+          : i;
+      const key = `${componentId}:${rowId}`;
       return (
         <React.Fragment key={key}>
           {renderNode(componentId, { ...ctx, scopePath })}

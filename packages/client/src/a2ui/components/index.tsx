@@ -281,11 +281,9 @@ const Slider: NodeRenderer = ({ node, ctx }) => {
  *
  * Each row in `/steps` is expected to be a string record with at least
  * `id`, `num`, `title`, and `status` keys (`pending` | `active` | `completed`).
- * `progress` (e.g. "2/5") is shown when present. Clicking a row triggers the
- * action with `{ event: { name, context: { stepId } } }` so the agent can
- * react to manual step selection.
- */
-/**
+ * `progress` (e.g. "2/5") is shown when present. Clicking a row toggles that
+ * StepItem's local `selected` highlight (pure frontend; see StepItem).
+ *
  * 容错: agent 偶尔会把 ChildList 模板写成单元素数组
  *   [{ path: "/data/path", componentId: "template-id" }]
  * 协议要求的形态是裸对象。unwrap 后再用协议层的 isTemplateChildren 判定。
@@ -363,21 +361,21 @@ const StepItem: NodeRenderer = ({ node, ctx }) => {
   const title = ensureString(bindStepItemField(node.title as DynamicValue<string>, ctx, "title"));
   const status = ensureString(bindStepItemField(node.status as DynamicValue<string>, ctx, "status"));
   const progress = ensureString(bindStepItemField(node.progress as DynamicValue<string>, ctx, "progress"));
-  const selected = ensureBoolean(bindStepItemField(node.selected as DynamicValue<boolean>, ctx, "selected"));
+  // `selected` is a pure-frontend visual highlight. Seeded once from the
+  // node.selected binding (if the agent set one), then lives in local React
+  // state and is NOT written back to the surface data model. This keeps agent
+  // step updates (updateDataModel at /steps replaces the whole array) from
+  // wiping the user's click. Trade-off: the agent cannot drive `selected`
+  // after mount - by design, status:"active" marks the current step, not
+  // this flag.
+  const [selected, setSelected] = useState(() =>
+    ensureBoolean(bindStepItemField(node.selected as DynamicValue<boolean>, ctx, "selected"))
+  );
 
   const statusKey: "completed" | "active" | "pending" =
     status === "completed" || status === "active" ? status : "pending";
 
-  // Pure-frontend toggle: clicking a row flips its `selected` flag in the
-  // surface data model. No action/event is dispatched to the agent. The
-  // pointer is computed once: scopePath is e.g. "/steps/0", so the field
-  // pointer is "/steps/0/selected". When clicked again, the value is inverted
-  // locally without any server round-trip.
-  const toggleSelected = () => {
-    if (!ctx.scopePath) return;
-    const pointer = ctx.scopePath + "/selected";
-    writeBack(ctx.surface.surfaceId, pointer, !selected);
-  };
+  const toggleSelected = () => setSelected((v) => !v);
 
   return (
     <div
