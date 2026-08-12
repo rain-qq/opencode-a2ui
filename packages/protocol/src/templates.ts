@@ -144,6 +144,12 @@ export type ArgSpec =
   | { kind: "boolean"; describe: string; optional?: boolean }
   | { kind: "enum"; values: string[]; describe: string; optional?: boolean }
   | { kind: "stringArray"; describe: string; optional?: boolean }
+  /**
+   * 形状自由的数组。用于表格的 rows —— 每行既可以是 string[] 也可以是以列名为键
+   * 的对象(模型两种都会写),再往下约束反而会把合法输入挡掉。归一化交给
+   * normalizeTable。
+   */
+  | { kind: "unknownArray"; describe: string; optional?: boolean }
   | { kind: "record"; describe: string; optional?: boolean }
   | {
       kind: "objectArray";
@@ -823,6 +829,289 @@ const confirmTemplate: TemplateSpec = {
 };
 
 /* ============================================================ *
+ *  table —— 独立表格
+ * ============================================================ */
+
+/**
+ * 归一化表格数据。columns 是表头,rows 是每行的单元格数组。
+ * 容错: rows 里的项可能是对象(按 columns 顺序取值)而不是数组 —— 模型偶尔会这么
+ * 写,毕竟对象更自然。两种都接。
+ */
+function normalizeTable(
+  rawColumns: unknown,
+  rawRows: unknown
+): { columns: string[]; rows: string[][] } {
+  const columns = asArray(rawColumns).map(str).filter(Boolean);
+  const rows = asArray(rawRows).map((row) => {
+    if (Array.isArray(row)) return row.map(str);
+    if (isPlainObject(row)) {
+      // 对象形态: 按 columns 顺序取值。columns 为空时退回对象自身的值顺序。
+      if (columns.length) return columns.map((c) => str(row[c]));
+      return Object.values(row).map(str);
+    }
+    return [str(row)];
+  });
+  return { columns, rows };
+}
+
+const tableTemplate: TemplateSpec = {
+  name: "table",
+  toolName: "render_table",
+  description:
+    "在用户界面渲染一张表格。适合多行多列的结构化数据(查询结果、对比、清单)。" +
+    "比 markdown 表格更适合数据量大的情况。纯展示,不可交互。",
+  args: {
+    columns: {
+      kind: "stringArray",
+      describe: "表头,按列顺序。必填。",
+    },
+    rows: {
+      kind: "unknownArray",
+      describe:
+        "数据行。每行是一个字符串数组(按 columns 顺序),也可以是以列名为键的对象。必填。",
+    },
+    title: { kind: "string", describe: "表格标题", optional: true },
+    emptyHint: {
+      kind: "string",
+      describe: "rows 为空时的提示文案",
+      optional: true,
+    },
+  },
+
+  build(data) {
+    const title = str(data.title);
+    const emptyHint = str(data.emptyHint) || "暂无数据";
+    const { columns, rows } = normalizeTable(data.columns, data.rows);
+
+    const components: ComponentNode[] = [
+      { id: "root", component: "Card", child: "col" },
+    ];
+    const colChildren: string[] = [];
+
+    if (title) {
+      colChildren.push("title");
+      components.push({
+        id: "title",
+        component: "Text",
+        variant: "heading",
+        text: { path: "/title" },
+      });
+    }
+
+    colChildren.push("table");
+    components.push({
+      id: "table",
+      component: "DataTable",
+      columns: { path: "/columns" },
+      rows: { path: "/rows" },
+      emptyHint: { path: "/emptyHint" },
+    });
+    components.push({ id: "col", component: "Column", children: colChildren });
+
+    return { components, dataModel: { title, columns, rows, emptyHint } };
+  },
+};
+
+/* ============================================================ *
+ *  process —— 执行过程控制台
+ *
+ *  这是唯一一个「会被反复更新」的模板: 步骤推进时模型带上同一个 surfaceId 再调
+ *  一次,整棵树按 id 覆盖、数据整根替换,视觉上就是原地刷新。
+ * ============================================================ */
+
+const STEP_STATUSES = ["pending", "active", "completed"];
+
+const processTemplate: TemplateSpec = {
+  name: "process",
+  toolName: "render_process",
+  description:
+    "在用户界面渲染一个执行过程控制台: 左侧步骤时间轴 + 顶部进度条 + 可选的产物表格和操作按钮。" +
+    "适合多步骤任务 —— 让用户随时看到走到哪一步、每步产出了什么。" +
+    "步骤推进时用同一个 surfaceId 再调一次即可原地刷新,不要新开一张。",
+  args: {
+    steps: {
+      kind: "objectArray",
+      describe: "步骤列表,必填。按执行顺序排列。",
+      fields: {
+        title: { kind: "string", describe: "步骤名称" },
+        status: {
+          kind: "enum",
+          values: STEP_STATUSES,
+          describe:
+            'completed=已完成(打勾), active=正在执行(脉冲点), pending=待执行(序号)。默认 pending。同一时刻只应有一个 active。',
+          optional: true,
+        },
+        id: {
+          kind: "string",
+          describe: "步骤标识。不给则自动编号。",
+          optional: true,
+        },
+      },
+    },
+    title: {
+      kind: "string",
+      describe: "顶部进度条的标题,如「当前步骤: 2/5 测试项生成」",
+      optional: true,
+    },
+    percent: {
+      kind: "number",
+      describe: "总体进度百分比 0-100。不给则按 completed 步数自动算。",
+      optional: true,
+    },
+    tableColumns: {
+      kind: "stringArray",
+      describe: "产物表格的表头。与 tableRows 一起给才会渲染表格。",
+      optional: true,
+    },
+    tableRows: {
+      kind: "unknownArray",
+      describe: "产物表格的数据行,形状同 render_table 的 rows。",
+      optional: true,
+    },
+    actions: {
+      kind: "objectArray",
+      describe:
+        "底部操作按钮,如「确认并下一步」「回退」。event 是点击后回传给你的事件名。",
+      optional: true,
+      fields: {
+        label: { kind: "string", describe: "按钮文案" },
+        event: { kind: "string", describe: "点击后回传的事件名" },
+        context: {
+          kind: "record",
+          describe: "随事件回传的附加数据",
+          optional: true,
+        },
+      },
+    },
+  },
+
+  build(data) {
+    // 步骤: 补 id(ChildList 迭代要用它做 key)与 num(时间轴上显示的序号)。
+    const steps = asArray(data.steps)
+      .map(obj)
+      .map((s, i) => {
+        const status = str(s.status);
+        return {
+          id: str(s.id) || `_s${i}`,
+          num: String(i + 1),
+          title: str(s.title),
+          status: STEP_STATUSES.includes(status) ? status : "pending",
+        };
+      });
+
+    const done = steps.filter((s) => s.status === "completed").length;
+    const activeIdx = steps.findIndex((s) => s.status === "active");
+    // 光标 = 用户视角的「第几步」。有 active 就是它,否则是已完成的下一步。
+    const cursor = activeIdx >= 0 ? activeIdx + 1 : done;
+
+    // 自动进度: 正在执行的那一步算**半步**。纯按 completed 数算的话,「4 步做完 1
+    // 步、第 2 步在跑」会显示 25%,配着「2/4」的标签看起来像倒退了;算上半步得
+    // 37%,与光标位置一致。模型显式给了 percent 就用它的。
+    const autoPercent = steps.length
+      ? Math.round(((done + (activeIdx >= 0 ? 0.5 : 0)) / steps.length) * 100)
+      : 0;
+    const percent = Math.max(
+      0,
+      Math.min(100, num(data.percent) ?? autoPercent)
+    );
+
+    // 进度条标题不给时自动生成 —— 让用户至少知道走到第几步。
+    const title =
+      str(data.title) ||
+      (steps.length ? `当前步骤: ${cursor}/${steps.length}` : "执行进度");
+
+    const { columns, rows } = normalizeTable(data.tableColumns, data.tableRows);
+    const hasTable = columns.length > 0 || rows.length > 0;
+
+    const actions = asArray(data.actions)
+      .map(obj)
+      .filter((a) => str(a.label) && str(a.event));
+
+    const components: ComponentNode[] = [
+      { id: "root", component: "Card", child: "col" },
+      {
+        id: "progress",
+        component: "StepProgress",
+        title: { path: "/title" },
+        percent: { path: "/percent" },
+        progressLabel: { path: "/progressLabel" },
+      },
+      // 时间轴。children 是模板绑定 —— 渲染层为 /steps 每一项渲染一份 step_item,
+      // 并把该项的绝对路径作为 scope 传下去,所以 step_item 里用相对路径。
+      {
+        id: "steplist",
+        component: "StepList",
+        emptyHint: "暂无步骤",
+        children: { path: "/steps", componentId: "step_item" },
+      },
+      {
+        id: "step_item",
+        component: "StepItem",
+        num: { path: "num" },
+        title: { path: "title" },
+        status: { path: "status" },
+      },
+    ];
+
+    const splitChildren = ["steplist"];
+    if (hasTable) {
+      splitChildren.push("table");
+      components.push({
+        id: "table",
+        component: "DataTable",
+        columns: { path: "/columns" },
+        rows: { path: "/rows" },
+        emptyHint: "本步骤暂无产物",
+      });
+    }
+    components.push({
+      id: "split",
+      component: "Row",
+      children: splitChildren,
+    });
+
+    const colChildren = ["progress", "split"];
+
+    if (actions.length) {
+      colChildren.push("footer");
+      const actionIds: string[] = [];
+      actions.forEach((a, i) => {
+        const id = `act_${i}`;
+        actionIds.push(id);
+        components.push(
+          ...buttonPair(
+            id,
+            str(a.label),
+            toAction(a),
+            // 最后一个按钮通常是「下一步」这类主操作。
+            i === actions.length - 1 ? "primary" : undefined
+          )
+        );
+      });
+      components.push({
+        id: "footer",
+        component: "CardFooter",
+        children: actionIds,
+      });
+    }
+
+    components.push({ id: "col", component: "Column", children: colChildren });
+
+    return {
+      components,
+      dataModel: {
+        title,
+        percent,
+        progressLabel: steps.length ? `${cursor}/${steps.length}` : "",
+        steps,
+        columns,
+        rows,
+      },
+    };
+  },
+};
+
+/* ============================================================ *
  *  注册表 + 展开
  * ============================================================ */
 
@@ -831,6 +1120,8 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
   list: listTemplate,
   form: formTemplate,
   confirm: confirmTemplate,
+  table: tableTemplate,
+  process: processTemplate,
 };
 
 export const TEMPLATE_NAMES: string[] = Object.keys(TEMPLATES);

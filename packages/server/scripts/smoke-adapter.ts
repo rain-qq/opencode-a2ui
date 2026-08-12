@@ -131,6 +131,72 @@ const SCENARIOS: { name: string; events: AgentEvent[] }[] = [
     events: renderCall("e2", "render_list", { title: "空列表", items: [] }),
   },
   {
+    name: "render_table(rows 为数组)",
+    events: renderCall("t1", "render_table", {
+      title: "测试项清单",
+      columns: ["一级测试项", "二级测试项", "优先级"],
+      rows: [
+        ["账号登录", "正常登录", "P0"],
+        ["账号登录", "密码错误", "P0"],
+      ],
+    }),
+  },
+  {
+    name: "render_table(rows 为对象 -> 按列名归一化)",
+    events: renderCall("t2", "render_table", {
+      columns: ["名称", "状态"],
+      rows: [
+        { 名称: "服务 A", 状态: "运行中" },
+        { 名称: "服务 B", 状态: "已停止" },
+      ],
+    }),
+  },
+  {
+    name: "render_process(步骤 + 产物表格 + 操作栏)",
+    events: renderCall("p1", "render_process", {
+      steps: [
+        { title: "需求拆解", status: "completed" },
+        { title: "测试项生成", status: "active" },
+        { title: "测试用例生成" },
+        { title: "XML 报告生成" },
+      ],
+      tableColumns: ["一级测试项", "二级测试项", "优先级"],
+      tableRows: [["账号登录", "正常登录", "P0"]],
+      actions: [
+        { label: "回退", event: "prevStep" },
+        { label: "确认并下一步", event: "nextStep" },
+      ],
+    }),
+  },
+  {
+    name: "render_process(仅步骤 -> percent 自动算, 无表格无操作栏)",
+    events: renderCall("p2", "render_process", {
+      steps: [
+        { title: "第一步", status: "completed" },
+        { title: "第二步", status: "completed" },
+        { title: "第三步", status: "active" },
+        { title: "第四步" },
+      ],
+    }),
+  },
+  {
+    name: "render_process 推进(同 surfaceId -> 原地刷新)",
+    events: [
+      ...renderCall("p3", "render_process", {
+        surfaceId: "run_1",
+        steps: [{ title: "第一步", status: "active" }, { title: "第二步" }],
+      }),
+      ...renderCall("p4", "render_process", {
+        surfaceId: "run_1",
+        steps: [{ title: "第一步", status: "completed" }, { title: "第二步", status: "active" }],
+      }),
+    ],
+  },
+  {
+    name: "render_process(steps 为空 -> 不炸流)",
+    events: renderCall("p5", "render_process", { steps: [] }),
+  },
+  {
     name: "渲染工具报错 -> 留一条 trace",
     events: [
       { type: "tool_call", id: "x1", name: "render_form", args: { submitEvent: "s" } },

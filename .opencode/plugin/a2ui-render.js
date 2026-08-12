@@ -49,6 +49,10 @@ function toZod(spec) {
     case "stringArray":
       base = z.array(z.string());
       break;
+    case "unknownArray":
+      // 形状自由的数组(表格 rows: string[] 或对象都接)。归一化在后端做。
+      base = z.array(z.unknown());
+      break;
     case "record":
       // 附加数据是自由形状 —— 只约束到「对象」,内容由业务决定。
       base = z.record(z.string(), z.unknown());
